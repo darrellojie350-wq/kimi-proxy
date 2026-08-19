@@ -56,7 +56,7 @@ class KimiTheme {
         thickness: 1,
         space: 1,
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: KimiColors.surface,
         elevation: 0,
         shape: RoundedRectangleBorder(
