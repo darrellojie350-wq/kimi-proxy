@@ -88,9 +88,31 @@ async function streamChatCompletion(session, userText) {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    broadcast(session.id, { type: 'error', message: `HTTP ${res.status}: ${errText.slice(0, 300)}` });
-    session.status = 'error';
-    return;
+    if (res.status === 503) {
+      broadcast(session.id, { type: 'content.delta', delta: '\n[upstream busy — retrying in 3s…]\n' });
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        res = await fetch(`${OPENAI_BASE}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
+          body: JSON.stringify(body),
+        });
+      } catch (e2) {
+        broadcast(session.id, { type: 'error', message: `Retry failed: ${e2.message}` });
+        session.status = 'error';
+        return;
+      }
+      if (!res.ok) {
+        const err2 = await res.text().catch(() => '');
+        broadcast(session.id, { type: 'error', message: `HTTP ${res.status}: ${err2.slice(0, 300)}` });
+        session.status = 'error';
+        return;
+      }
+    } else {
+      broadcast(session.id, { type: 'error', message: `HTTP ${res.status}: ${errText.slice(0, 300)}` });
+      session.status = 'error';
+      return;
+    }
   }
 
   const reader = res.body.getReader();
