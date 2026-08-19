@@ -8,6 +8,7 @@ import '../widgets/tool_card.dart';
 import '../widgets/thinking_panel.dart';
 import '../widgets/session_sidebar.dart';
 import '../widgets/composer.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -169,6 +170,16 @@ class _TopBar extends StatelessWidget {
                 tooltip: 'Interrupt',
               ),
           ],
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, size: 20),
+            color: KimiColors.textSecondary,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
+            },
+            tooltip: 'Settings',
+          ),
         ],
       ),
     );
