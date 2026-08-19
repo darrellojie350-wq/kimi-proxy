@@ -17,7 +17,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     // Default bridge URL — user can change in settings
-    bridgeUrl = 'ws://85.121.148.62:8765';
+    bridgeUrl = 'ws://85.121.148.62:9876';
     _sub = bridge.events.listen(_onBridgeEvent);
   }
 

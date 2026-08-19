@@ -1,0 +1,12 @@
+{
+  "name": "kimi-proxy-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "main": "kimi-bridge.js",
+  "scripts": {
+    "start": "node kimi-bridge.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
