@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Kimi Proxy — ultra-fast remote client for Kimi Code CLI">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kimi Proxy</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    body { margin: 0; background: #0A0B0F; }
+    .loading {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #8B90A0; font-family: system-ui, sans-serif; font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loading">Loading Kimi Proxy…</div>
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    window.addEventListener('flutter-first-frame', () => {
+      const el = document.getElementById('loading');
+      if (el) el.remove();
+    });
+  </script>
+</body>
+</html>
