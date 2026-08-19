@@ -28,9 +28,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       await bridge.connect(bridgeUrl!);
-      bridge.listSessions();
+      if (bridge.isConnected) {
+        bridge.listSessions();
+      }
     } catch (e) {
-      connectionError = e.toString();
+      connectionError = e.toString().replaceFirst('Exception: ', '');
     } finally {
       connecting = false;
       notifyListeners();

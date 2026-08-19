@@ -4,48 +4,111 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter/foundation.dart';
 
 /// WebSocket bridge to VPS Kimi Code CLI sessions.
-/// Protocol is intentionally simple and stream-first.
 class BridgeService {
   WebSocketChannel? _channel;
   final _controller = StreamController<BridgeEvent>.broadcast();
   String? _vpsUrl;
   bool _connected = false;
   Timer? _heartbeat;
+  StreamSubscription? _sub;
 
   Stream<BridgeEvent> get events => _controller.stream;
   bool get isConnected => _connected;
 
+  /// True when running on HTTPS web and trying insecure ws:// (browsers block this).
+  static bool isMixedContentBlocked(String url) {
+    if (!kIsWeb) return false;
+    final pageHttps = Uri.base.scheme == 'https';
+    final wsInsecure = url.startsWith('ws://');
+    return pageHttps && wsInsecure;
+  }
+
   Future<void> connect(String url) async {
     await disconnect();
     _vpsUrl = url;
-    try {
-      _channel = WebSocketChannel.connect(Uri.parse(url));
-      _connected = true;
-      _controller.add(BridgeEvent(type: BridgeEventType.connected));
-      _startHeartbeat();
 
-      _channel!.stream.listen(
+    if (isMixedContentBlocked(url)) {
+      final msg =
+          'Browser blocked insecure WebSocket.\n\n'
+          'This page is HTTPS (GitHub Pages) but the bridge is ws://.\n'
+          'Browsers refuse mixed content.\n\n'
+          'Fix: open the app over HTTP on the VPS, or use wss:// with TLS.\n'
+          'Temporary: http://85.121.148.62:9876/ (after web is hosted there).';
+      _connected = false;
+      _controller.add(BridgeEvent(type: BridgeEventType.error, data: {'message': msg}));
+      throw Exception(msg);
+    }
+
+    try {
+      final uri = Uri.parse(url);
+      _channel = WebSocketChannel.connect(uri);
+
+      // Wait until server greets us (or timeout / error)
+      final ready = Completer<void>();
+      Timer? timeout;
+
+      _sub = _channel!.stream.listen(
         (data) {
           try {
             final map = jsonDecode(data as String) as Map<String, dynamic>;
-            _controller.add(BridgeEvent.fromJson(map));
+            final event = BridgeEvent.fromJson(map);
+            if (!_connected &&
+                (event.type == BridgeEventType.connected ||
+                    event.type == BridgeEventType.pong ||
+                    event.type == BridgeEventType.sessionCreated ||
+                    event.type == BridgeEventType.sessionList)) {
+              _connected = true;
+              if (!ready.isCompleted) ready.complete();
+            }
+            _controller.add(event);
           } catch (e) {
             debugPrint('Bridge parse error: $e');
           }
         },
         onError: (e) {
           _connected = false;
-          _controller.add(BridgeEvent(type: BridgeEventType.error, data: {'message': e.toString()}));
+          final msg = e.toString();
+          _controller.add(BridgeEvent(type: BridgeEventType.error, data: {'message': msg}));
+          if (!ready.isCompleted) ready.completeError(e);
         },
         onDone: () {
           _connected = false;
           _controller.add(BridgeEvent(type: BridgeEventType.disconnected));
           _heartbeat?.cancel();
+          if (!ready.isCompleted) {
+            ready.completeError(Exception('WebSocket closed before handshake'));
+          }
         },
+        cancelOnError: false,
       );
+
+      timeout = Timer(const Duration(seconds: 8), () {
+        if (!ready.isCompleted) {
+          ready.completeError(
+            Exception(
+              'Connection timed out after 8s.\n'
+              'Check bridge is running and URL is correct.\n'
+              'If on HTTPS page, ws:// is blocked by the browser.',
+            ),
+          );
+        }
+      });
+
+      // Nudge server; some stacks need a first frame
+      try {
+        _channel!.sink.add(jsonEncode({'type': 'ping', 'ts': DateTime.now().millisecondsSinceEpoch}));
+      } catch (_) {}
+
+      await ready.future;
+      timeout.cancel();
+      _startHeartbeat();
+      _controller.add(BridgeEvent(type: BridgeEventType.connected));
     } catch (e) {
       _connected = false;
-      _controller.add(BridgeEvent(type: BridgeEventType.error, data: {'message': e.toString()}));
+      _controller.add(BridgeEvent(
+        type: BridgeEventType.error,
+        data: {'message': e.toString()},
+      ));
       rethrow;
     }
   }
@@ -53,23 +116,30 @@ class BridgeService {
   void _startHeartbeat() {
     _heartbeat?.cancel();
     _heartbeat = Timer.periodic(const Duration(seconds: 15), (_) {
-      send({'type': 'ping'});
+      send({'type': 'ping', 'ts': DateTime.now().millisecondsSinceEpoch});
     });
   }
 
   Future<void> disconnect() async {
     _heartbeat?.cancel();
-    await _channel?.sink.close();
+    await _sub?.cancel();
+    _sub = null;
+    try {
+      await _channel?.sink.close();
+    } catch (_) {}
     _channel = null;
     _connected = false;
   }
 
   void send(Map<String, dynamic> payload) {
     if (_channel == null || !_connected) return;
-    _channel!.sink.add(jsonEncode(payload));
+    try {
+      _channel!.sink.add(jsonEncode(payload));
+    } catch (e) {
+      debugPrint('send failed: $e');
+    }
   }
 
-  // High-level commands
   void createSession({String? name, String? workDir, String? model}) {
     send({
       'type': 'session.create',
