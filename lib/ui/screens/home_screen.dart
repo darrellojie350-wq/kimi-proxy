@@ -87,39 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Column(
         children: [
-          if (mixed)
-            Material(
-              color: KimiColors.danger.withValues(alpha: 0.15),
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber_rounded,
-                          color: KimiColors.danger, size: 18),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          kIsWeb
-                              ? 'HTTPS page blocks ws://. Install the APK for full chat, or host UI on the VPS over HTTP.'
-                              : 'Bridge URL uses ws:// — fine on native apps.',
-                          style: const TextStyle(
-                            color: KimiColors.textPrimary,
-                            fontSize: 12,
-                            height: 1.35,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _openSettings,
-                        child: const Text('Settings'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          // Direct API mode: chat works without VPS bridge / no mixed-content block
           Expanded(
             child: Row(
               children: [

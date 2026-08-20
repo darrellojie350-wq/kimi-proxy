@@ -33,7 +33,7 @@ jobs:
           cp assets/icon.png android/app/src/main/res/drawable/ic_launcher_foreground.png || true
 
       - run: flutter pub get
-
+      - run: dart run flutter_launcher_icons || true
       - name: Build release APK
         run: flutter build apk --release
 
