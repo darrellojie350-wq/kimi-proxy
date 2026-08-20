@@ -16,30 +16,30 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable platforms
+      - name: Create Android platform
         run: flutter create . --project-name kimi_proxy --org com.kimiproxy.app --platforms=android || true
 
-      - name: Restore sources (flutter create may overwrite)
+      - name: Restore our sources
         run: |
-          git checkout HEAD -- lib pubspec.yaml analysis_options.yaml || true
-          mkdir -p assets
-          touch assets/.gitkeep
+          git checkout HEAD -- lib pubspec.yaml analysis_options.yaml assets || true
+          mkdir -p assets && touch assets/.gitkeep
+
+      - name: Bump compileSdk to 36
+        run: |
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/compileSdk = .*/compileSdk = 36/' android/app/build.gradle.kts || true
+          fi
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/compileSdk .*/compileSdk 36/' android/app/build.gradle || true
+          fi
+          grep -n compileSdk android/app/build.gradle* || true
 
       - run: flutter pub get
 
-      - name: Build debug APK (no signing required)
+      - name: Build debug APK
         run: flutter build apk --debug
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: kimi-proxy-apk
           path: build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
-
-      - name: Upload to release assets path
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: ignore
