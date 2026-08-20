@@ -115,12 +115,22 @@ class AppState extends ChangeNotifier {
   }
 
   void createSession({String? name}) {
+    if (!bridge.isConnected) {
+      connectionError = 'Not connected to bridge';
+      notifyListeners();
+      return;
+    }
     bridge.createSession(name: name);
   }
 
   void sendPrompt(String text) {
     final s = activeSession;
     if (s == null || text.trim().isEmpty) return;
+    if (!bridge.isConnected) {
+      connectionError = 'Not connected to bridge';
+      notifyListeners();
+      return;
+    }
 
     final userMsg = ChatMessage(role: MessageRole.user, content: text.trim());
     messages.putIfAbsent(s.id, () => []).add(userMsg);
