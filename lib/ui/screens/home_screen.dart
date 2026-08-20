@@ -134,14 +134,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         if (!isWide) setState(() => _sidebarOpen = false);
                       },
                       onNew: () {
-                        if (!state.bridge.isConnected) {
-                          _openSettings();
-                          return;
-                        }
                         state.createSession();
+                        if (!isWide) setState(() => _sidebarOpen = false);
                       },
                       onToggle: () => setState(() => _sidebarOpen = false),
-                      connected: state.bridge.isConnected,
+                      connected: true, // direct API path is active
                       latencyMs: state.latencyMs,
                       connecting: state.connecting,
                       error: state.connectionError,
@@ -174,15 +171,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       Expanded(
                         child: msgs.isEmpty
                             ? _EmptyState(
-                                connected: state.bridge.isConnected,
+                                connected: true,
                                 mixed: mixed,
-                                onNew: () {
-                                  if (!state.bridge.isConnected) {
-                                    _openSettings();
-                                    return;
-                                  }
-                                  state.createSession();
-                                },
+                                onNew: () => state.createSession(),
                                 onSettings: _openSettings,
                               )
                             : ListView.builder(
@@ -203,19 +194,16 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                       ),
                       Composer(
-                        connected: state.bridge.isConnected,
+                        connected: true, // direct mode always available
                         hasSession: session != null,
-                        isStreaming: session?.status == SessionStatus.streaming ||
+                        isStreaming: state.isGenerating ||
+                            session?.status == SessionStatus.streaming ||
                             session?.status == SessionStatus.thinking ||
                             session?.status == SessionStatus.toolRunning,
-                        onSend: (text) => _ensureSessionAndSend(state, text),
+                        onSend: (text) => state.sendPrompt(text),
                         onInterrupt: state.interrupt,
-                        onNeedConnect: _openSettings,
-                        onNeedSession: () {
-                          if (state.bridge.isConnected) {
-                            state.createSession(name: 'Chat');
-                          }
-                        },
+                        onNeedConnect: null,
+                        onNeedSession: () => state.createSession(name: 'Chat'),
                       ),
                     ],
                   ),
@@ -400,11 +388,7 @@ class _EmptyState extends StatelessWidget {
             Text('Kimi Proxy', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),
             Text(
-              connected
-                  ? 'Connected — start a session to chat'
-                  : mixed
-                      ? 'Web (HTTPS) cannot use ws:// bridge.\nUse the Android APK for full chat.'
-                      : 'Connect the bridge in Settings, then chat',
+              'Type below to chat · New Session in the menu',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
@@ -484,7 +468,10 @@ class _MessageBlock extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          if (message.hasThinking) ThinkingPanel(content: message.reasoningContent!),
+          if (message.hasThinking)
+            ThinkingPanel(content: message.reasoningContent!, isLive: message.isStreaming),
+          if (message.isStreaming && message.content.isEmpty && !message.hasThinking)
+            const Padding(padding: EdgeInsets.only(bottom: 12), child: StreamingDots()),
           if (message.hasTools)
             ...message.toolCalls.map(
               (t) => ToolCard(
