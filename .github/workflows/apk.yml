@@ -21,23 +21,37 @@ jobs:
       - name: Restore sources
         run: |
           git checkout HEAD -- lib pubspec.yaml analysis_options.yaml assets || true
-          mkdir -p assets && test -f assets/icon.png || true
+          mkdir -p assets
 
-      - name: compileSdk 36 + app name + icon
+      - name: compileSdk 36
         run: |
           if [ -f android/app/build.gradle.kts ]; then
             sed -i 's/compileSdk = .*/compileSdk = 36/' android/app/build.gradle.kts || true
           fi
-          # Use debug signing for release artifact until keystore provided (still release mode)
-          mkdir -p android/app/src/main/res/drawable
-          cp assets/icon.png android/app/src/main/res/drawable/ic_launcher_foreground.png || true
 
       - run: flutter pub get
       - run: dart run flutter_launcher_icons || true
-      - name: Build release APK
-        run: flutter build apk --release
+
+      - name: Build release APK (retry on rate limit)
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i"
+            if flutter build apk --release; then
+              exit 0
+            fi
+            echo "Build failed, sleeping 90s for Maven rate limit..."
+            sleep 90
+          done
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: kimi-proxy-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Attach to latest release if tag
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v0.1.0-release build/app/outputs/flutter-apk/app-release.apk --clobber || true

@@ -22,7 +22,7 @@ class AppState extends ChangeNotifier {
   double? latencyMs;
   StreamSubscription? _sub;
 
-  ChatBackend backend = ChatBackend.direct;
+  ChatBackend backend = ChatBackend.bridge;
   String selectedModel = 'gpt-4.1-nano';
   bool swarmMode = false;
   final List<String> swarmModels = ['gpt-4.1-nano', 'gpt-4.1-mini', 'gpt-4o-mini'];
