@@ -1,0 +1,45 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable platforms
+        run: flutter create . --project-name kimi_proxy --org com.kimiproxy.app --platforms=android || true
+
+      - name: Restore sources (flutter create may overwrite)
+        run: |
+          git checkout HEAD -- lib pubspec.yaml analysis_options.yaml || true
+          mkdir -p assets
+          touch assets/.gitkeep
+
+      - run: flutter pub get
+
+      - name: Build debug APK (no signing required)
+        run: flutter build apk --debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimi-proxy-apk
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+
+      - name: Upload to release assets path
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: ignore
