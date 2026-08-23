@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - 'webapp/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'capacitor.config.*'
 
 permissions:
   contents: read
