@@ -175,65 +175,79 @@ function buildArgs(session, prompt) {
 }
 
 function runKimiPrompt(session, prompt, ws) {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    session.status = 'streaming';
+  return new Promise((resolve) => runOnce(session, prompt, ws, resolve, false));
+}
+
+function runOnce(session, prompt, ws, resolve, retried) {
+  const started = Date.now();
+  session.status = 'streaming';
+  session.updatedAt = new Date().toISOString();
+  send(ws, { type: 'status', sessionId: session.id, status: 'streaming' });
+
+  const args = buildArgs(session, prompt);
+  const proc = spawn(KIMI_BIN, args, {
+    cwd: session.workDir,
+    env: { ...process.env },
+    windowsHide: true,
+  });
+  session.proc = proc;
+
+  let buffer = '';
+  let stderrText = '';
+  const flushLine = (line) => {
+    line = line.trim();
+    if (!line) return;
+    let evt;
+    try { evt = JSON.parse(line); } catch {
+      send(ws, { type: 'content.delta', sessionId: session.id, delta: line + '\n' });
+      return;
+    }
+    mapStreamEvent(session, evt);
+  };
+
+  proc.stdout.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || '';
+    for (const line of lines) flushLine(line);
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    const t = chunk.toString();
+    stderrText += t;
+    if (/error/i.test(t) && !/error-?file/i.test(t)) {
+      send(ws, { type: 'error', sessionId: session.id, message: t.slice(0, 500) });
+    }
+  });
+
+  proc.on('close', (code) => {
+    // Kimi API thinking-mode contract: a follow-up request must echo back
+    // reasoning_content. If resuming a session hits this error, the session's
+    // context is unusable — retry once on a fresh session instead of dying.
+    if (code !== 0 && /reasoning_content/i.test(stderrText) && !retried) {
+      console.log(`[bridge] reasoning_content error on ${session.id}; retrying fresh`);
+      session.kimiSessionId = null; // abandon the poisoned resume context
+      send(ws, { type: 'error', sessionId: session.id, message: 'Session context invalid (thinking-mode); retrying on a fresh session…' });
+      runOnce(session, prompt, ws, resolve, true);
+      return;
+    }
+    if (buffer.trim()) flushLine(buffer);
+    session.status = 'idle';
+    session.proc = null;
+    session.messageCount += 1;
     session.updatedAt = new Date().toISOString();
-    send(ws, { type: 'status', sessionId: session.id, status: 'streaming' });
+    const durationMs = Date.now() - started;
+    send(ws, { type: 'turn.complete', sessionId: session.id, code, durationMs });
+    send(ws, { type: 'status', sessionId: session.id, status: 'idle', session: session.toJSON() });
+    resolve(code);
+  });
 
-    const args = buildArgs(session, prompt);
-    const proc = spawn(KIMI_BIN, args, {
-      cwd: session.workDir,
-      env: { ...process.env },
-      windowsHide: true,
-    });
-    session.proc = proc;
-
-    let buffer = '';
-    const flushLine = (line) => {
-      line = line.trim();
-      if (!line) return;
-      let evt;
-      try { evt = JSON.parse(line); } catch {
-        send(ws, { type: 'content.delta', sessionId: session.id, delta: line + '\n' });
-        return;
-      }
-      mapStreamEvent(session, evt);
-    };
-
-    proc.stdout.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || '';
-      for (const line of lines) flushLine(line);
-    });
-
-    proc.stderr.on('data', (chunk) => {
-      const t = chunk.toString();
-      if (/error/i.test(t) && !/error-?file/i.test(t)) {
-        send(ws, { type: 'error', sessionId: session.id, message: t.slice(0, 500) });
-      }
-    });
-
-    proc.on('close', (code) => {
-      if (buffer.trim()) flushLine(buffer);
-      session.status = 'idle';
-      session.proc = null;
-      session.messageCount += 1;
-      session.updatedAt = new Date().toISOString();
-      const durationMs = Date.now() - started;
-      send(ws, { type: 'turn.complete', sessionId: session.id, code, durationMs });
-      send(ws, { type: 'status', sessionId: session.id, status: 'idle', session: session.toJSON() });
-      resolve(code);
-    });
-
-    proc.on('error', (err) => {
-      session.status = 'error';
-      session.proc = null;
-      send(ws, { type: 'error', sessionId: session.id, message: err.message });
-      send(ws, { type: 'turn.complete', sessionId: session.id, code: 1, durationMs: Date.now() - started });
-      resolve(1);
-    });
+  proc.on('error', (err) => {
+    session.status = 'error';
+    session.proc = null;
+    send(ws, { type: 'error', sessionId: session.id, message: err.message });
+    send(ws, { type: 'turn.complete', sessionId: session.id, code: 1, durationMs: Date.now() - started });
+    resolve(1);
   });
 }
 
