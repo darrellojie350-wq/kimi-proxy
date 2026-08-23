@@ -1,9 +1,28 @@
 /**
- * Kimi Proxy Bridge — WebSocket front-end for Kimi Code CLI on the VPS.
- * Protocol matches Flutter BridgeService.
+ * Kimi Proxy Bridge v1.5 — WebSocket front-end for Kimi Code CLI.
  *
- * Run: node server.js
- * Default port: 8765
+ * Applies to Kimi Code CLI 0.38+:
+ *  - `kimi -p "<prompt>" --output-format stream-json` emits OpenAI-style JSONL:
+ *      {"role":"meta","type":"system.version","version":"0.38.0"}
+ *      {"role":"assistant","tool_calls":[{"type":"function","id":"call_...","function":{"name":"Bash","arguments":"{...}"}}]}
+ *      {"role":"tool","tool_call_id":"call_...","content":"..."}
+ *      {"role":"assistant","content":"..."}
+ *      {"role":"meta","type":"session.resume_hint","session_id":"session_...","command":"kimi -r session_...","content":"..."}
+ *  - `-p` cannot be combined with `-y` / `--auto` (rejected by CLI), so tools auto-run in prompt mode.
+ *  - Multi-turn continues via the resume hint: `kimi -r <session_id> -p ...`.
+ *
+ * Wire protocol (app <-> bridge), JSON objects:
+ *   C->S: ping, session.create{name,workDir,model}, session.list, session.delete{id},
+ *         session.rename{id,name}, prompt{sessionId,content}, interrupt{sessionId},
+ *         config{sessionId,yolo,planMode,model}, tool.approve/deny (reserved)
+ *   S->C: connected, pong, session.list{sessions[]}, session.created{session},
+ *         content.delta{sessionId,delta}, thinking.delta{sessionId,delta},
+ *         tool.call{sessionId,toolCallId,name,arguments},
+ *         tool.output{sessionId,toolCallId,output}, tool.status{sessionId,toolCallId,status,durationMs},
+ *         status{sessionId,status}, turn.complete{sessionId,code,durationMs},
+ *         error{sessionId,message}
+ *
+ * Run: node server.js   (PORT / KIMI_BIN / KIMI_WORK_ROOT env overrides)
  */
 
 const http = require('http');
@@ -11,15 +30,24 @@ const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
-const PORT = process.env.PORT || 8765;
-const KIMI_BIN = process.env.KIMI_BIN || 'C:\\Users\\Admin\\.kimi-code\\bin\\kimi.exe';
-const WORK_ROOT = process.env.KIMI_WORK_ROOT || 'C:\\Users\\Admin\\kimi-proxy-sessions';
+const PORT = parseInt(process.env.PORT || '8765', 10);
 
-if (!fs.existsSync(WORK_ROOT)) {
-  fs.mkdirSync(WORK_ROOT, { recursive: true });
+function defaultKimiBin() {
+  if (process.env.KIMI_BIN) return process.env.KIMI_BIN;
+  if (os.platform() === 'win32') return 'C:\\Users\\Admin\\.kimi-code\\bin\\kimi.exe';
+  return path.join(os.homedir(), '.kimi-code', 'bin', 'kimi');
 }
+const KIMI_BIN = defaultKimiBin();
+
+function defaultWorkRoot() {
+  if (process.env.KIMI_WORK_ROOT) return process.env.KIMI_WORK_ROOT;
+  return path.join(os.homedir(), '.kimi-code', 'kimi-proxy-sessions');
+}
+const WORK_ROOT = defaultWorkRoot();
+if (!fs.existsSync(WORK_ROOT)) fs.mkdirSync(WORK_ROOT, { recursive: true });
 
 /** @type {Map<string, Session>} */
 const sessions = new Map();
@@ -30,10 +58,10 @@ class Session {
     this.name = name || `Session ${id.slice(0, 6)}`;
     this.workDir = workDir || path.join(WORK_ROOT, id);
     this.status = 'idle';
-    this.yolo = true;
+    this.yolo = true; // prompt mode auto-runs tools; kept for future ACP mode
     this.planMode = false;
-    this.thinkingEnabled = true;
     this.model = null;
+    this.kimiSessionId = null; // resume id returned by kimi
     this.createdAt = new Date().toISOString();
     this.updatedAt = this.createdAt;
     this.messageCount = 0;
@@ -54,33 +82,106 @@ class Session {
       model: this.model,
       yolo: this.yolo,
       planMode: this.planMode,
-      thinkingEnabled: this.thinkingEnabled,
+      thinkingEnabled: true,
     };
   }
 }
 
 function send(ws, obj) {
-  if (ws.readyState === 1) ws.send(JSON.stringify(obj));
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
-function broadcast(obj) {
-  // single-client for now; extend later
+function broadcastTo(sessionId, obj) {
+  // single-client bridge for now; forward to all connected sockets
+  for (const ws of wss.clients) {
+    if (ws.readyState === 1) ws.send(JSON.stringify(obj));
+  }
+}
+
+/** Map a kimi stream-json line to app protocol events. */
+function mapStreamEvent(session, evt) {
+  const role = evt.role;
+  const t = evt.type;
+
+  if (role === 'meta') {
+    if (t === 'system.version') return;
+    if (t === 'session.resume_hint' && evt.session_id) {
+      session.kimiSessionId = evt.session_id;
+    }
+    return;
+  }
+
+  if (role === 'assistant') {
+    // tool calls
+    if (Array.isArray(evt.tool_calls)) {
+      for (const tc of evt.tool_calls) {
+        const fn = tc.function || {};
+        let args = fn.arguments || {};
+        if (typeof args === 'string') {
+          try { args = JSON.parse(args); } catch { args = { raw: args }; }
+        }
+        broadcastTo(session.id, {
+          type: 'tool.call',
+          sessionId: session.id,
+          toolCallId: tc.id || randomUUID(),
+          name: fn.name || 'tool',
+          arguments: args,
+        });
+      }
+    }
+    // reasoning / thinking
+    const reasoning = evt.reasoning_content || evt.reasoning || (evt.content && evt.content.reasoning);
+    if (reasoning && typeof reasoning === 'string') {
+      broadcastTo(session.id, { type: 'thinking.delta', sessionId: session.id, delta: reasoning });
+      session.status = 'thinking';
+    }
+    // content
+    const content = evt.content;
+    if (typeof content === 'string' && content) {
+      broadcastTo(session.id, { type: 'content.delta', sessionId: session.id, delta: content });
+      session.status = 'streaming';
+    }
+    return;
+  }
+
+  if (role === 'tool') {
+    broadcastTo(session.id, {
+      type: 'tool.output',
+      sessionId: session.id,
+      toolCallId: evt.tool_call_id || '',
+      output: typeof evt.content === 'string' ? evt.content : JSON.stringify(evt.content || ''),
+    });
+    broadcastTo(session.id, {
+      type: 'tool.status',
+      sessionId: session.id,
+      toolCallId: evt.tool_call_id || '',
+      status: 'success',
+    });
+    return;
+  }
+
+  if (role === 'user') {
+    // echoes back user content (only in multi-turn continuation lines); ignore
+    return;
+  }
+}
+
+function buildArgs(session, prompt) {
+  const args = ['-p', prompt, '--output-format', 'stream-json'];
+  if (session.kimiSessionId) args.push('-r', session.kimiSessionId);
+  if (session.model) args.push('-m', session.model);
+  if (session.planMode) args.push('--plan');
+  return args;
 }
 
 function runKimiPrompt(session, prompt, ws) {
   return new Promise((resolve) => {
+    const started = Date.now();
     session.status = 'streaming';
     session.updatedAt = new Date().toISOString();
     send(ws, { type: 'status', sessionId: session.id, status: 'streaming' });
 
-    const args = [
-      '-p', prompt,
-      '--output-format', 'stream-json',
-      '-y', // yolo for bridge; app still controls approval UX later
-    ];
-    if (session.model) args.push('-m', session.model);
-    if (session.planMode) args.push('--plan');
-
+    const args = buildArgs(session, prompt);
     const proc = spawn(KIMI_BIN, args, {
       cwd: session.workDir,
       env: { ...process.env },
@@ -92,15 +193,12 @@ function runKimiPrompt(session, prompt, ws) {
     const flushLine = (line) => {
       line = line.trim();
       if (!line) return;
-      try {
-        const evt = JSON.parse(line);
-        handleStreamEvent(session, evt, ws);
-      } catch {
-        // plain text fallback
-        if (line) {
-          send(ws, { type: 'content.delta', sessionId: session.id, delta: line + '\n' });
-        }
+      let evt;
+      try { evt = JSON.parse(line); } catch {
+        send(ws, { type: 'content.delta', sessionId: session.id, delta: line + '\n' });
+        return;
       }
+      mapStreamEvent(session, evt);
     };
 
     proc.stdout.on('data', (chunk) => {
@@ -112,9 +210,8 @@ function runKimiPrompt(session, prompt, ws) {
 
     proc.stderr.on('data', (chunk) => {
       const t = chunk.toString();
-      // kimi sometimes logs to stderr
-      if (t.includes('error') || t.includes('Error')) {
-        send(ws, { type: 'content.delta', sessionId: session.id, delta: t });
+      if (/error/i.test(t) && !/error-?file/i.test(t)) {
+        send(ws, { type: 'error', sessionId: session.id, message: t.slice(0, 500) });
       }
     });
 
@@ -124,8 +221,9 @@ function runKimiPrompt(session, prompt, ws) {
       session.proc = null;
       session.messageCount += 1;
       session.updatedAt = new Date().toISOString();
-      send(ws, { type: 'turn.complete', sessionId: session.id, code });
-      send(ws, { type: 'status', sessionId: session.id, status: 'idle' });
+      const durationMs = Date.now() - started;
+      send(ws, { type: 'turn.complete', sessionId: session.id, code, durationMs });
+      send(ws, { type: 'status', sessionId: session.id, status: 'idle', session: session.toJSON() });
       resolve(code);
     });
 
@@ -133,68 +231,15 @@ function runKimiPrompt(session, prompt, ws) {
       session.status = 'error';
       session.proc = null;
       send(ws, { type: 'error', sessionId: session.id, message: err.message });
-      send(ws, { type: 'turn.complete', sessionId: session.id });
+      send(ws, { type: 'turn.complete', sessionId: session.id, code: 1, durationMs: Date.now() - started });
       resolve(1);
     });
   });
 }
 
-function handleStreamEvent(session, evt, ws) {
-  // Flexible mapping — stream-json shape may vary by kimi version
-  const type = evt.type || evt.event || '';
-  const sid = session.id;
-
-  if (type.includes('thinking') || evt.reasoning_content || evt.thinking) {
-    const delta = evt.delta || evt.reasoning_content || evt.thinking || evt.text || '';
-    if (delta) send(ws, { type: 'thinking.delta', sessionId: sid, delta });
-    session.status = 'thinking';
-    return;
-  }
-
-  if (type.includes('tool') || evt.tool_call || evt.name) {
-    const toolCallId = evt.id || evt.tool_call_id || randomUUID();
-    const name = evt.name || evt.tool || 'tool';
-    const args = evt.arguments || evt.args || {};
-    send(ws, {
-      type: 'tool.call',
-      sessionId: sid,
-      toolCallId,
-      name,
-      arguments: typeof args === 'string' ? { raw: args } : args,
-    });
-    session.status = 'toolRunning';
-    return;
-  }
-
-  if (type.includes('tool_result') || type.includes('tool.output') || evt.output) {
-    send(ws, {
-      type: 'tool.output',
-      sessionId: sid,
-      toolCallId: evt.tool_call_id || evt.id || '',
-      output: evt.output || evt.content || evt.result || '',
-    });
-    send(ws, {
-      type: 'tool.status',
-      sessionId: sid,
-      toolCallId: evt.tool_call_id || evt.id || '',
-      status: evt.status || 'success',
-    });
-    return;
-  }
-
-  // content / message deltas
-  const delta = evt.delta || evt.content || evt.text || evt.message || '';
-  if (delta && typeof delta === 'string') {
-    send(ws, { type: 'content.delta', sessionId: sid, delta });
-    session.status = 'streaming';
-  }
-}
-
 function interruptSession(session) {
   if (session.proc) {
-    try {
-      session.proc.kill('SIGTERM');
-    } catch (_) {}
+    try { session.proc.kill('SIGTERM'); } catch (_) {}
     session.proc = null;
   }
   session.status = 'idle';
@@ -202,8 +247,8 @@ function interruptSession(session) {
 
 const server = http.createServer((req, res) => {
   if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, sessions: sessions.size }));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ ok: true, sessions: sessions.size, port: PORT, kimiBin: KIMI_BIN, workRoot: WORK_ROOT }));
     return;
   }
   res.writeHead(404);
@@ -213,10 +258,8 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
-  console.log('[bridge] client connected');
+  console.log(`[bridge] client connected ${new Date().toISOString()}`);
   send(ws, { type: 'connected' });
-
-  // send existing sessions
   send(ws, {
     type: 'session.list',
     sessions: Array.from(sessions.values()).map((s) => s.toJSON()),
@@ -224,18 +267,10 @@ wss.on('connection', (ws) => {
 
   ws.on('message', async (raw) => {
     let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
-
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
     const t = msg.type;
 
-    if (t === 'ping') {
-      send(ws, { type: 'pong', ts: msg.ts || Date.now() });
-      return;
-    }
+    if (t === 'ping') { send(ws, { type: 'pong', ts: msg.ts || Date.now() }); return; }
 
     if (t === 'session.create') {
       const id = randomUUID();
@@ -247,23 +282,30 @@ wss.on('connection', (ws) => {
     }
 
     if (t === 'session.list') {
-      send(ws, {
-        type: 'session.list',
-        sessions: Array.from(sessions.values()).map((s) => s.toJSON()),
-      });
+      send(ws, { type: 'session.list', sessions: Array.from(sessions.values()).map((s) => s.toJSON()) });
+      return;
+    }
+
+    if (t === 'session.delete') {
+      const s = sessions.get(msg.sessionId);
+      if (s) { if (s.proc) interruptSession(s); sessions.delete(s.id); }
+      send(ws, { type: 'session.deleted', sessionId: msg.sessionId });
+      return;
+    }
+
+    if (t === 'session.rename') {
+      const s = sessions.get(msg.sessionId);
+      if (s && msg.name) { s.name = msg.name; s.updatedAt = new Date().toISOString(); }
+      send(ws, { type: 'session.renamed', sessionId: msg.sessionId, session: s && s.toJSON() });
       return;
     }
 
     if (t === 'prompt') {
       const s = sessions.get(msg.sessionId);
-      if (!s) {
-        send(ws, { type: 'error', message: 'session not found' });
-        return;
-      }
+      if (!s) { send(ws, { type: 'error', sessionId: msg.sessionId, message: 'session not found' }); return; }
       const prompt = msg.content || '';
       if (!prompt.trim()) return;
-      // fire and forget async
-      runKimiPrompt(s, prompt, ws);
+      runKimiPrompt(s, prompt, ws); // fire and forget
       return;
     }
 
@@ -271,7 +313,7 @@ wss.on('connection', (ws) => {
       const s = sessions.get(msg.sessionId);
       if (s) {
         interruptSession(s);
-        send(ws, { type: 'turn.complete', sessionId: s.id });
+        send(ws, { type: 'turn.complete', sessionId: s.id, code: -1 });
         send(ws, { type: 'status', sessionId: s.id, status: 'idle' });
       }
       return;
@@ -287,18 +329,15 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // tool approve/deny — for future interactive mode
-    if (t === 'tool.approve' || t === 'tool.deny') {
-      // currently yolo auto-runs; reserved for ACP integration
-      return;
-    }
+    // reserved for future interactive (ACP) mode
+    if (t === 'tool.approve' || t === 'tool.deny') return;
   });
 
   ws.on('close', () => console.log('[bridge] client disconnected'));
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[kimi-proxy-bridge] listening on 0.0.0.0:${PORT}`);
+  console.log(`[kimi-proxy-bridge v1.5] listening on 0.0.0.0:${PORT}`);
   console.log(`[kimi-proxy-bridge] kimi binary: ${KIMI_BIN}`);
   console.log(`[kimi-proxy-bridge] work root: ${WORK_ROOT}`);
 });

@@ -1,0 +1,123 @@
+# mobbin-dev-tools — actionable design spec for the Kimi Code WebSocket client (streaming responses, thinking, tool calls, tool outputs, multi-session, dark-first, clinical)
+
+> Method note: the Mobbin MCP API routes 404'd (server-side API change), so Mobbin evidence was harvested from mobbin.com/explore web pages via Firecrawl (text metadata only — screen titles, descriptions, pattern/element tags). Every reference below is a real Mobbin page. The design foundation is the official Kimi Web Design System v1.0 (read in full) — tokens are quoted from it verbatim.
+
+## Key findings
+
+1. **AI chat is not messaging.** Setproduct's field guide ("Designing AI chat interfaces", May 2026) shows Claude.ai/ChatGPT/Cursor converged on flat, full-width messages with subtle background differentiation — round colorful SMS bubbles signal "casual texting" and undermine tool framing. Mobbin: ChatGPT iOS "Chat Interface" (f7e6514e) = text field + suggested prompts + camera; "Chat Main Interface" (5e55dde4) = recent conversations + search bar + side navigation + avatar.
+2. **Mid-stream state is a first-class screen.** Mobbin "Grok iOS Generating Response" (637ddec2): *"Partial response 'For dinner, how' displayed, indicating the dinner plan generation"* — the app renders partial text immediately, no spinner gate. Grok iOS "Home Screen" (d0141899): *"'Ask Anything' text field"* + carousel suggestions. First-token <800ms is the perceived-performance target (setproduct).
+3. **Thinking/reasoning is a collapsed disclosure, labeled honestly.** Setproduct: "Treat it as a collapsible section above the answer. Default collapsed. Label it honestly — `Thinking`, `Reasoning` — not vague terms like `Working on it`." Kimi §04 already implements this exactly: inline borderless row, bulb glyph, breathing label, elapsed seconds, folds itself back after the stream passes.
+4. **Tool calls in dev tools render as an activity log, not a pile of widgets.** Kimi §04: high-frequency calls (read/bash/grep) are "operational noise" → one quiet borderless line per call (~24px row, 13px UI / 12px mono), bespoke per tool, auto-grouped into an activity-run summary, detail expands in place. Silvery's AI-coding-agent doc confirms the same need: streaming output that grows unpredictably + diff-style tool output + scroll containers that never fight the user.
+5. **Dark dev-tool chrome = near-black substrate + hairlines + no shadows.** Linear design system analyses: 0.5px hairlines (#23252a / #383b3f) instead of shadows, surface ladder + hairlines for depth, weights in a tight 400–510 band, tracking ≈ −0.022em. Raycast: almost-black canvas (#07080a/#040506), monochrome continuous dark (no light variant), one saturated accent reserved for identity, Inter with ss03. Mobbin "Linear Web Dark mode app" (cc5d476b): "Main application interface in dark mode, showing issue list and sidebar" (category: Developer Tools). Kimi's own ladder (#121212→#1f1f1f→#292929, chrome at #0d0d0d) is the production version of this exact idea.
+6. **Dark-mode surfaces on Mobbin's web screens are a who's-who of dense tools**: Notion, Databricks, v0, Krea AI, Midday, Read.cv, Toggl Track, WorkOS, Attio, Grok, Mixpanel, ChatGPT, Superhuman Mail, GitLab, Sana AI, Canva, Descript (mobbin.com/explore/web/screens/dark-mode). Takeaway: near-black pages, hairline panel seams, mono data, scarce accent.
+7. **Onboarding in serious tools is short and task-shaped, not celebratory.** Linear Web Onboarding Flow (64ae582c): 25 screens but strictly account → workspace setup → app intro. Slack Web "Completing a guided tutorial Flow" (4bbe3999): pricing → tutorial → lands at the message input. Both end at the tool's core surface. ChatGPT "Welcome & Get Started" (f0f5c405) uses Button + Animation + Logo — the consumer-style splash we deliberately skip.
+8. **Login/account is a quiet picker, not a marketing moment.** Linear Web "Logging in" (a8e6cb8a) and Slack Web "Logging in" (59ffcf88) are plain flows. Kimi §03 ActionCard (leading icon + title + hint + chevron, disabled-dims-while-probing) already covers OAuth rows.
+9. **Loading has exactly two legitimate vocabularies in a clinical tool.** Kimi §03: plain Spinner (SVG ring) for all generic waits; Skeleton = breathing opacity, never a gradient shimmer (hard rule). Mobbin confirms skeleton screens exist in Figma Web (dc3f727d), Square Web "Skeleton Dashboard" (2f5210c0), Binance/Uber iOS — but none use shimmer gradients. Perplexity has a dedicated "Loading Screen" (c5ccbf06). In a streaming client, skeletons belong to cold loads (session list, reconnect), never to generation — generation shows partial text + caret.
+10. **Suggestions chips are an empty-state affordance, dismissible.** ChatGPT iOS shows suggested prompts above the composer; Grok's home is an "Ask Anything" field + carousel. Setproduct: suggestions are useful when exploring, harmful when the user knows what they want — make them dismissible, never pin them under every reply.
+11. **Stop is non-negotiable and disappears when done.** Setproduct: a visible Stop-generating control during streaming, hidden the instant streaming ends; stopped replies keep partial output with Continue/Regenerate. Kimi's send circle inverts (text fill + bg glyph) — the same slot becomes the stop affordance.
+12. **Auto-scroll obeys the 100px rule.** Setproduct: auto-scroll only when the viewport is within 100px of the bottom; the moment the user scrolls up, lock position and show a floating "Jump to latest" pill. Kimi §04 spec's jump-to-latest control (12px UI, weight 525, down-arrow icon) matches this exactly.
+13. **Selection = "where I am", never accent.** Kimi §06: sidebar rows and list pickers use neutral --color-selected, accent reserved for actions/focus/links. Linear's UI does the same. This is the single most reliable "premium dev tool" tell.
+14. **Regenerate/error variants keep the work.** Setproduct: ChatGPT/Claude keep regenerated variants in a carousel (never silently overwrite); errors state *what happened, why, and the one fixing action* — never a generic "Something went wrong". Kimi §04 already has the persistent turn-failed card (danger shell, provider message, mono diagnostics, one Continue action).
+
+## Design decisions to adopt
+
+- **Dark-first with the production ladder; light mode is derived, not bespoke.** WHAT: page `#0d1117`, surface `#13181e`, raised `#1c2128`, sidebar `#0a0d12` (the Kimi palette dark set); text `rgba(255,255,255,.84)`, muted `.56`, line `rgba(255,255,255,.12)`, subtle `.05`; accent `#58a6ff` (or `#1a88ff` token) used only for primary action, links, focus rings, active marks. WHY: Linear/Raycast near-black + hairline convention; Mobbin dark-mode web screens (Notion, GitLab, v0). WHERE: entire shell.
+- **One hairline everywhere: 0.5px.** WHAT: all structural edges — card rims, plane seams, panel headers, floating layers — are `--color-line` 0.5px; separation comes from luminance (one-rung surface steps) first, hairline second; never a shadow-only floating surface (dark kills shadows). WHY: Linear "hairlines instead of shadows", Kimi §02 borders. WHERE: chat pane, sidebar, tool detail panels, dialogs.
+- **Lacquer chrome: panel heads one step below the page.** WHAT: conversation header and every right-panel head = `--panel-head-h` 48px, `#0a0d12` (surface-deep), 0.5px bottom hairline. WHY: Kimi §08; dark elevation rule (chrome darker than content). WHERE: chat header, session inspector, tool output panel.
+- **Density: 4px grid, font-driven rows.** WHAT: spacing scale 4/6/8/12/16/20/24/32; session rows ≈32px font-driven, tool lines ≈24px, inputs 38px, IconButtons 26/32 (44 touch); type: 14px UI body, 13px stream rows, 12px mono code, 12px timestamps. WHY: Kimi §02/§03/§04; Linear's tight 400–510 band. WHERE: everywhere; nothing below 32px clickable on desktop.
+- **Stream = flat full-width blocks, not bubbles.** WHAT: assistant content flush-left in the 760px reading column; user messages = neutral `#292929` fill, `--radius-lg`, no border/shadow (Kimi user-bubble recipe); no SMS bubble styling, no avatar clutter per message. WHY: Claude.ai/ChatGPT/Cursor convergence (setproduct); ChatGPT iOS Mobbin screens. WHERE: message stream.
+- **Tool calls = one quiet borderless line; only Question/Approval get a card.** WHAT: per Kimi §04 tiers — ① tool line (glyph + localized label + mono content + trailing meta + status dot, no hover wash, no card chrome), ② activity-run fold (≥2 consecutive items fold to one summary sentence: `Read 2 files · Ran 5 commands (1 failed) · 26s`), ③ decision card only for approval/question (raised surface, hairline, radius-lg, no color band). WHY: Kimi §04 + silvery tool-call pattern; avoids the "pile of widgets" Mobbin consumer chat apps fall into. WHERE: message stream.
+- **Thinking = collapsed disclosure row, never a side panel.** WHAT: inline borderless row, `thinking` icon, "Thinking…" label breathing (opacity only) while streaming + ticking whole seconds; settles to "Thinking process · Ns"; grid-rows expand + 90° chevron; folds itself back once the stream moves past. WHY: setproduct (collapse, honest label); Kimi §04. WHERE: stream, above first text.
+- **Streaming indicator = partial text + caret, not a spinner.** WHAT: tokens paint as they arrive (batch 30–60ms paint windows); a thin blinking block caret at the stream end is the "alive" signal; phase line in the composer dock ("Requesting…" → "Working…" → elapsed Ns) for the pre-token window; no percentage bar, no full-screen spinner during generation. WHY: Grok Generating Response (partial text shown), setproduct (caret, no fake progress), Kimi WorkingIndicator. WHERE: assistant message + dock.
+- **Auto-scroll with the 100px rule + jump pill.** WHAT: stick to bottom only while within 100px of it; on scroll-up, lock and show the jump-to-latest pill (12px/525, down-arrow, `--z-sticky`). WHY: setproduct; Kimi §04. WHERE: stream container.
+- **Stop in the send slot.** WHAT: while streaming, the send circle becomes a filled stop square (same 32px geometry, `--color-text` fill / `--color-bg` glyph, hover darkens); hidden instantly when the turn settles. Stopped partial output persists with Continue/Regenerate. WHY: setproduct; Kimi send-button tokens. WHERE: composer.
+- **Status dots share one vocabulary.** WHAT: running = pulsing accent dot, done = green circle-check, failed = red close, cancelled = neutral; color never the only cue (glyph + text where it matters). WHY: Kimi §04 status language; Linear/Kimi row language. WHERE: tool lines, session rows, work pills, activity runs.
+- **Empty state = 48px faint icon + title + hint + dismissible suggestion chips.** WHAT: on a fresh session, centered EmptyState plus up to 3-4 prompt chips above/inside the composer area (transparent pill, hairline, hover wash, × to dismiss); never a marketing splash. WHY: ChatGPT/Grok suggested prompts; Kimi EmptyState primitive; setproduct (dismissible). WHERE: first-run / new session.
+- **Command palette = flush picker anatomy.** WHAT: `⌘K` opens a dialog (lg · fixed) with one boxed search (autofocus), calm result rows (8×12px padding, radius-md, neutral selected fill, name + muted meta line), and a bottom shortcut bar (Kbd keycaps + 12px faint labels). Selection is a neutral fill, accent only for actions. WHY: Kimi §10 flush picker; Linear AI / Raycast command-palette pattern (setproduct: "faster than typing a sentence"). WHERE: global nav, session switching, model switching.
+- **Login/onboarding = one screen, task-shaped.** WHAT: login dialog (md · padded) with 2-3 ActionCard OAuth rows (icon + title + hint + chevron, disabled-while-probing) and a link-style "Add a custom provider"; after auth: a single "connect to a workspace" step with a mono command bar (install/kimi-proxy URL) then straight into the chat. No carousel, no animated mascot splash. WHY: Linear/Slack onboarding end at the core surface fast; Kimi ActionCard + CommandBar primitives. WHERE: first launch.
+- **Toast = icon + title + description, color only on the icon.** WHAT: bottom-right stack for warnings/errors; top-center ActionToast pill for undoable one-liners (archive, delete) with inline plain-text actions, self-timed 8s, hover pauses. WHY: Kimi §03 Toast; restrained vs consumer banners. WHERE: session ops, reconnect, errors.
+- **Reconnect/lost-connection = banner, not a modal.** WHAT: `.info/.warning` Banner at the top of the content area (icon + one line, muted), auto-dismisses on reconnect; never blocks the stream. WHY: Kimi Banner primitive; modal-locking during streaming is a listed anti-pattern (setproduct). WHERE: chat pane top.
+- **Motion: three durations only.** WHAT: 120ms press/focus, 160ms hover/show-hide, 260ms dialog/layout; `--ease-out cubic-bezier(0.16,1,0.3,1)` for enter/hover, `--ease-in-out` for layout; dropdown pop = fade + 0.97 scale from trigger corner (160ms in / 120ms out); spinner period 700ms; everything off under `prefers-reduced-motion`. WHY: Kimi §02; Grok/Perplexity keep motion minimal; "endlessly looping fussy micro-animations" is a hard brand do-not. WHERE: all surfaces.
+
+## Component recipes
+
+### Composer (docked, 32px superellipse shell)
+- **Anatomy**: one raised container, `--radius-composer` 32px + `superellipse(1.5)`, fill `#1f1f1f` (`--color-composer-bg`), rest edge 0.5px `rgba(255,255,255,.12)`, focus edge crossfades to a low-chroma accent line over 260ms (`--ease-in-out`), shadow `0 5px 16px -4px rgba(0,0,0,.07)` unchanged on focus — no halo, no layout shift. Inside: multiline input (grows to ~6 rows then scrolls) + toolbar row of transparent 32px full-round controls (+, permission mode, model pill, context) + one filled 32px send circle at the trailing edge.
+- **States**: rest / focus (line edge only) / disabled-send (empty draft or upload in flight — `opacity:.5`-style `--opacity-send-disabled`, never a fade) / sending (send → stop) / error (one danger-soft hint line under the toolbar, dismissible).
+- **Motion**: focus edge fade 260ms; popups pop from trigger corner (160ms in, 120ms out). Attachment strip (files as mono chips, images as thumbnails) renders the same as the sent message — draft = sent.
+
+### Streaming message + typing/streaming indicator
+- **Anatomy**: full-width block in the 760px column; Markdown rendered incrementally (code fences render as plain mono text until closed, syntax highlight applied in a second pass on close — no backtick flicker); 12px `JetBrains Mono` for inline code/blocks; code blocks get a filename bar + copy button (transient check on click).
+- **Streaming**: blinking 2px block caret at token end (800ms blink, `--color-text-muted`); tokens batched to 30–60ms paint windows; no reflow jank (auto-scroll per 100px rule).
+- **Phases**: `Requesting…` (pre-first-token, plain Spinner in the dock, ≤800ms target) → `Working…` + ticking elapsed seconds while streaming → settled (caret gone, per-message actions appear: copy / edit / regenerate / continue).
+- **States**: queued (no fake progress) / streaming / stopped (partial kept + Continue + Regenerate) / regenerating (previous variant kept in a navigable carousel, never silently overwritten) / failed (persistent terminal card: danger-soft surface, 24px warning chip, provider message muted, mono diagnostics line `provider.rate_limit · HTTP 429 · req_…`, one secondary Continue action; not dismissible while the turn is idle-failed).
+- **Motion**: no per-token animation; caret is CSS; phase label swap 160ms.
+
+### Thinking UI (disclosure row)
+- **Anatomy**: inline borderless row, ~22px, left-flush with prose: 16px `thinking` glyph (muted) + 13px UI label + trailing elapsed `· Ns` (mono 12px, faint); real `<button aria-expanded>`; chevron hugs the text (never far edge).
+- **States**: streaming (label breathes — opacity 1↔.5, 160ms — seconds tick) / settled ("Thinking process · 12s") / expanded (grid-rows fold, chevron 90°) / auto-folded once the stream moves past, even if user expanded mid-stream.
+
+### Tool-call row (quiet line)
+- **Anatomy**: one line, ~24px, left-flush; order = glyph (16px muted) + action label (`Read`/`Run`/`Edit`, 13px muted) + tool-specific content (file name as the one strong-text button `--color-text`, dir · `:12-45` · `+12 −4` meta at muted/faint; Bash = full mono command, ellipsized + duration chip) + trailing status dot (pulsing accent / green ✓ / red ✕). No card chrome, no hover wash, no inset. Expand → detail hangs below at the line's left edge (mono output panel: well surface, hairline, 12-line scroll cap; inline diff; match lists).
+- **Grouping**: ≥2 consecutive activity items fold to one activity-run row (30px, roomier 8px padding): live summary while streaming (current action + per-kind counts + ticking seconds), folds itself back on settle; failure clause hangs in danger red (`Ran 5 commands (1 failed)`); ≥2 tool kinds aggregate in first-appearance order.
+- **Turn fold**: once a turn settles, everything before the final text folds to one bare `Worked 4m57s` row (elapsed time, no glyph); final text + trailing media never fold.
+
+### Session list item (sidebar)
+- **Anatomy**: inset rounded pill in a 264px sidebar on `#0a0d12`: `8px 8px` padding, `--radius-sm`, font-driven ≈32px; structure = status slot (16px: Spinner sm when running, 7px accent dot when unread) → title (13-14px, truncate, `user-select:none`, double-click inline rename) → time (mono 12px, faint, yields to hover actions) → attention Badge (info/warning/danger, sm) → hover actions (pin + archive IconButtons sm, cross-faded over the time). Second line (flat variant): folder icon + cwd basename.
+- **States**: rest / hover (`--color-hover` wash, actions fade in) / selected (`--color-selected` neutral fill — "where I am", never accent) / running (spinner) / needs-attention (badge). Group head = folder icon + muted 500-weight name, kebab/`+` on hover; section labels 13px/700/uppercase/`.08em`/faint.
+- **Motion**: row background only, 120ms; hover-actions cross-fade 160ms; archive → ActionToast with Undo.
+
+### Command palette (`⌘K`)
+- **Anatomy**: dialog lg · fixed · flush: one boxed Input (inset 22px to align with head title, autofocus), result list (flex:1, owns scroll), rows `8px 12px` padding `--radius-md`: name 14/20 (medium when current) + meta 12/18 faint (workspace · path · status), trailing check on current row; bottom shortcut bar (Kbd keycaps + 12px faint labels, `↑↓` move · Enter select · Esc close, grouped with `·`, aria-hidden).
+- **States**: empty query (top workspaces + recent sessions) / searching (Spinner sm in input) / results / no-results (centered faint line). Selection is a fill, accent only for the confirm action. Keyboard-selected = hover (pointer and keys never disagree).
+
+### Loading skeleton
+- **Anatomy**: placeholder rows mirroring final layout — session-list skeleton = 4-5 pill rows (rounded 8px bars, ~32px tall); stream = 3-4 text-line bars at 14px with varying widths + one code block (mono bar, 12px) + one avatar circle 24px. Fill `rgba(255,255,255,.05)`, radius-md.
+- **Motion**: breathing opacity 1↔.55 over ~1.2s, loop; **no gradient shimmer, no gradients anywhere** (hard style rule). Full `prefers-reduced-motion` → static. Used only for cold loads (reconnect, session history fetch, first paint); generation never shows a skeleton.
+
+### Empty state
+- **Anatomy**: centered in the reading column: 48px faint icon (`--p-ic-lg`), 16px title (`--color-text`), 13px muted hint one line. For a fresh session: same block + 3-4 suggestion chips (transparent pill, 0.5px hairline, radius-full, 13px/475 muted; hover = `--color-selected` wash + text brightens; `×` per chip dismisses; "New chat" EmptyState on the sidebar when no sessions).
+- **Variants**: no sessions / no search matches / offline (warning icon + "Reconnecting…" + Spinner sm) / no workspace attached (command bar with the install command + copy).
+
+### Toast
+- **Anatomy**: bottom-right stack; `--radius-lg`, raised surface + hairline + `--shadow-md`, `--z-toast` 600; structure = status icon (18px, the ONLY colored element: success/warning/danger) + 14px title + 13px muted description; auto-dismiss 8s, hover pauses; enter 260ms slide+fade.
+- **ActionToast variant**: floating pill top-center just below the 48px header, one sentence + inline plain-text accent actions + close; self-timed 8s, parent re-keys to reset; used for archive/delete undo. Warnings stay bottom-right.
+
+## Anti-patterns to avoid
+
+1. **Purple gradients, glassmorphism, glowing shadows, gradient text** — the brand do-not list (Kimi §01/§07). Menus + frosted sticky TopBar are the *only* blur exceptions.
+2. **Emoji as functional icons** — banned; registry icons only (16/14/20px).
+3. **SMS-style round bubbles / rainbow message colors** — flat full-width blocks (setproduct; Claude.ai/ChatGPT/Cursor).
+4. **Fake typing animation that throttles a fast model** — stream at model speed, batch 30–60ms (setproduct).
+5. **No stop button, or a stop button that lingers after completion** (setproduct).
+6. **Generic error toasts ("Something went wrong")** — say what failed, why, and the one fixing action (setproduct; Kimi turn-failed card).
+7. **Auto-scroll that yanks the user back down** — 100px rule + jump-to-latest pill (setproduct).
+8. **Progress bars / percentage spinners during generation** — no measurable progress exists; fake bars break trust (setproduct).
+9. **A card around every tool call** — quiet borderless lines; cards only for decisions (Kimi §04).
+10. **Accent-tinted selection** — "where I am" is neutral; accent = action (Kimi §06).
+11. **Modal-locking or disabling the composer while streaming** — user composes the next prompt while reading (setproduct).
+12. **Silent context truncation** — show "Earlier messages summarized" or warn near the window (setproduct; Kimi Context-usage toast).
+13. **Buried model selector** — model name visible per assistant message; switch reachable in one click (setproduct).
+14. **Undismissible suggestion chips / disclaimer walls under every reply** — suggestions on empty state only (setproduct).
+15. **Loosely looping micro-animations (mascot dances, shimmer heads)** — one WorkingIndicator phase label, everything else static/160ms (Kimi).
+
+## Top 10 takeaways
+
+1. The Kimi design system already answers 80% of this client — adopt its tokens verbatim; Mobbin evidence exists to justify, not replace, it.
+2. Dark = near-black ladder + 0.5px hairlines + luminance separation; shadows are elevation only, never decoration (Linear/Kimi).
+3. The stream is the product: flat full-width blocks, 760px column, generous 1.6 line-height prose.
+4. Stream partial text + a blinking caret immediately; spinner only for the pre-token "Requesting…" phase (<800ms target).
+5. Thinking and tool calls are quiet, collapsed, borderless disclosure — a log, not a widget pile; only approval/question earns a card.
+6. Stop lives in the send slot, dies the instant the turn settles; stopped/regenerated output is never destroyed.
+7. Auto-scroll obeys the 100px rule; jump-to-latest pill when the user reads up.
+8. Density is the premium signal: 4px grid, 32px rows, 12-14px type, mono 12px data, Kbd keycaps everywhere.
+9. One accent (#58a6ff dark) for action/focus/links only; selection is neutral; status colors only on dots/icons.
+10. Onboarding/login is one quiet screen ending at the composer — no splash, no carousel, no mascot tour.
+
+## Summary
+
+- Built `research/mobbin-dev-tools.md` from the Kimi Web Design System v1.0 (full doc) + 20+ Mobbin screen/flow pages (Grok, ChatGPT, Linear, Slack, Gemini, Perplexity, Notion, GitLab, v0, Figma, Square) + Linear/Raycast design analyses + setproduct's AI-chat field guide + silvery's coding-agent doc.
+- The Mobbin MCP API was down (server-side route change), so all Mobbin references come from its public web pages via Firecrawl — screen titles/descriptions are quoted with their page IDs; no images were used anywhere.
+- Core verdict: the official Kimi system already specifies the correct clinical, density-first, hairline language; Mobbin research validates the chat-app conventions (flat stream, suggested prompts, dark chrome, status dots, skeleton breathing) and supplies the few missing pieces (streaming caret, stop-in-send-slot, 100px auto-scroll rule, regenerate carousel, reconnect banner).
+- The spec pins exact tokens (dark ladder #0d1117→#1c2128, #58a6ff accent, 0.5px hairlines, 4px grid, 120/160/260ms motion, 12px mono/13px rows/14px body) and full recipes for composer, streaming message, thinking, tool-call row, session item, command palette, skeleton, empty state, and toast.
+- Only the spec file was written; nothing else under `/home/ubuntu/kimi-proxy` was modified.

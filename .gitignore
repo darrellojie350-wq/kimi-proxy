@@ -1,0 +1,5 @@
+node_modules/
+*.log
+bridge/bridge*.log
+research/imgs-*/
+research/imgs-mobbin-screens/
