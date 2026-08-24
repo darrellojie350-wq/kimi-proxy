@@ -1,85 +1,33 @@
-/* Kimi Proxy — service worker (shell/css slice, ARCHITECTURE.md §11)
- * Cache-first for same-origin static assets, network-first for cross-origin
- * (fonts, KaTeX CDN). Versioned cache name; prune stale caches on activate. */
+/* Kimi Proxy — legacy PWA service worker KILL SWITCH.
+ * The Flutter app now owns this origin. This worker exists only to
+ * unregister itself and wipe its caches so existing visitors are released
+ * from the old cached shell and load the Flutter app on their next visit.
+ * It does NOT intercept any requests.
+ */
 'use strict';
 
-var CACHE_NAME = 'kimi-proxy-v3';
-
-var PRECACHE_URLS = [
-  './',
-  './index.html',
-  './manifest.webmanifest',
-  './css/tokens.css',
-  './css/app.css',
-  './assets/icon-192.png',
-  './assets/icon-512.png'
-];
-
-/* Install: precache the app shell, then activate immediately. */
-self.addEventListener('install', function (event) {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(function (cache) { return cache.addAll(PRECACHE_URLS); })
-      .then(function () { return self.skipWaiting(); })
-  );
+self.addEventListener('install', function () {
+  self.skipWaiting();
 });
 
-/* Activate: delete any cache other than the current version. */
 self.addEventListener('activate', function (event) {
   event.waitUntil(
-    caches.keys()
-      .then(function (keys) {
-        return Promise.all(
-          keys
-            .filter(function (key) { return key !== CACHE_NAME; })
-            .map(function (key) { return caches.delete(key); })
+    (async function () {
+      if (self.caches && self.caches.keys) {
+        var keys = await self.caches.keys();
+        await Promise.all(
+          keys.map(function (k) {
+            return self.caches.delete(k);
+          })
         );
-      })
-      .then(function () { return self.clients.claim(); })
+      }
+      if (self.registration && self.registration.unregister) {
+        await self.registration.unregister();
+      }
+    })()
   );
+  self.clients.claim();
 });
 
-self.addEventListener('fetch', function (event) {
-  var request = event.request;
-  if (request.method !== 'GET') return;
-
-  var url;
-  try {
-    url = new URL(request.url);
-  } catch (err) {
-    return;
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-
-  /* Cross-origin (fonts, KaTeX): network-first, falling back to cache. */
-  if (url.origin !== self.location.origin) {
-    event.respondWith(
-      fetch(request)
-        .then(function (response) {
-          if (response && response.ok) {
-            var copy = response.clone();
-            caches.open(CACHE_NAME).then(function (cache) { cache.put(request, copy); });
-          }
-          return response;
-        })
-        .catch(function () {
-          return caches.match(request);
-        })
-    );
-    return;
-  }
-
-  /* Same-origin static: cache-first, runtime-cache successful GETs. */
-  event.respondWith(
-    caches.match(request).then(function (cached) {
-      if (cached) return cached;
-      return fetch(request).then(function (response) {
-        if (response && response.ok && response.type === 'basic') {
-          var copy = response.clone();
-          caches.open(CACHE_NAME).then(function (cache) { cache.put(request, copy); });
-        }
-        return response;
-      });
-    })
-  );
-});
+// Intentionally NO fetch handler — the browser falls back to the network,
+// which serves the new Flutter index.html.
