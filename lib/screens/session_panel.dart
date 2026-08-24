@@ -35,31 +35,29 @@ class _BrandHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        Tokens.sp4,
-        Tokens.sp3,
-        Tokens.sp2,
-        Tokens.sp2,
-      ),
+      padding: const EdgeInsets.fromLTRB(Tokens.sp4, Tokens.sp3, Tokens.sp2, Tokens.sp2),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: Tokens.sp2,
-              vertical: 2,
-            ),
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
-              color: Tokens.accent,
-              borderRadius: BorderRadius.circular(Tokens.rSm),
-            ),
-            child: const Text(
-              'Kimi',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF3B9CFF), Color(0xFF0F5FD6)],
               ),
+            ),
+            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 16),
+          ),
+          const SizedBox(width: Tokens.sp2),
+          const Text(
+            'Kimi Proxy',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.3,
             ),
           ),
           const Spacer(),
@@ -68,7 +66,8 @@ class _BrandHeader extends StatelessWidget {
             tooltip: 'New chat',
             visualDensity: VisualDensity.compact,
             iconSize: 22,
-            icon: const Icon(Icons.add_circle_outline),
+            icon: const Icon(Icons.add_circle_rounded),
+            color: Tokens.accent,
           ),
         ],
       ),
@@ -88,6 +87,50 @@ class _SessionList extends StatefulWidget {
 class _SessionListState extends State<_SessionList> {
   final TextEditingController _search = TextEditingController();
   String _query = '';
+
+  /// Group sessions into Today / Yesterday / Earlier with section labels.
+  List<Widget> _groupedRows(AppState state, List sessions) {
+    final now = DateTime.now();
+    final scheme = Theme.of(context).colorScheme;
+    final labelStyle = TextStyle(
+      fontSize: 10.5,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 1.1,
+      color: scheme.onSurface.withValues(alpha: 0.4),
+    );
+    final rows = <Widget>[];
+    String? currentGroup;
+
+    for (final s in sessions) {
+      final t = s.updatedAt;
+      final group = _groupOf(now, t);
+      if (group != currentGroup) {
+        currentGroup = group;
+        rows.add(Padding(
+          padding: const EdgeInsets.fromLTRB(Tokens.sp3, Tokens.sp2, Tokens.sp3, 4),
+          child: Text(group, style: labelStyle),
+        ));
+      }
+      final active = state.activeSession?.id == s.id ||
+          (s.serverId != null && state.activeSession?.serverId == s.serverId);
+      rows.add(SessionRow(
+        session: s,
+        selected: active,
+        onTap: () => state.selectSessionById(s.id),
+      ));
+    }
+    return rows;
+  }
+
+  String _groupOf(DateTime now, DateTime t) {
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(t.year, t.month, t.day);
+    final diff = today.difference(day).inDays;
+    if (diff <= 0) return 'TODAY';
+    if (diff == 1) return 'YESTERDAY';
+    if (diff < 7) return 'THIS WEEK';
+    return 'EARLIER';
+  }
 
   @override
   void dispose() {
@@ -148,7 +191,7 @@ class _SessionListState extends State<_SessionList> {
           ),
         ),
         const Divider(height: 0.5),
-        // Rows
+        // Rows (grouped by day)
         Expanded(
           child: sessions.isEmpty
               ? Center(
@@ -157,23 +200,12 @@ class _SessionListState extends State<_SessionList> {
                     style: TextStyle(fontSize: 13, color: secondary),
                   ),
                 )
-              : ListView.builder(
+              : ListView(
                   padding: const EdgeInsets.symmetric(
                     horizontal: Tokens.sp2,
                     vertical: Tokens.sp2,
                   ),
-                  itemCount: sessions.length,
-                  itemBuilder: (context, i) {
-                    final s = sessions[i];
-                    final active = state.activeSession?.id == s.id ||
-                        (s.serverId != null &&
-                            state.activeSession?.serverId == s.serverId);
-                    return SessionRow(
-                      session: s,
-                      selected: active,
-                      onTap: () => state.selectSessionById(s.id),
-                    );
-                  },
+                  children: _groupedRows(state, sessions),
                 ),
         ),
       ],

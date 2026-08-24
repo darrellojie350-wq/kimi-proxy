@@ -6,9 +6,8 @@ import '../models/session.dart';
 import '../services/app_state.dart';
 import '../theme/tokens.dart';
 
-/// Composer — the input bar with mode pills (YOLO / Plan / Auto / Think),
-/// a growing multi-line text field, a context ring behind the send/stop
-/// button, and a hint row. Styled like a premium iOS input field.
+/// Premium iOS-style composer — segmented mode control, multi-line input with
+/// Enter to send, gradient send/stop button with context ring, attach, voice.
 class Composer extends StatefulWidget {
   const Composer({super.key});
 
@@ -34,9 +33,7 @@ class _ComposerState extends State<Composer> {
 
   static bool _isBusy(Session? s) {
     final status = s?.status ?? 'idle';
-    return status == 'streaming' ||
-        status == 'thinking' ||
-        status == 'toolRunning';
+    return status == 'streaming' || status == 'thinking' || status == 'toolRunning';
   }
 
   void _submit() {
@@ -49,32 +46,27 @@ class _ComposerState extends State<Composer> {
     setState(() {});
   }
 
-  void _toggleThink() {
-    setState(() => _think = !_think);
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final hairline = Theme.of(context).dividerTheme.color ?? scheme.outline;
-    final hintColor =
-        dark ? Tokens.darkTertiaryLabel : Tokens.lightTertiaryLabel;
+    final hintColor = dark ? Tokens.darkTertiaryLabel : Tokens.lightTertiaryLabel;
     final session = state.activeSession;
     final online = state.connectionStatus == 'online';
     final busy = _isBusy(session);
     final canSend = online && _controller.text.trim().isNotEmpty && !busy;
+    final msgCount = (session?.messages.length ?? 0);
+    final ctxPct = (msgCount % 100) / 100.0;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          Tokens.sp3, Tokens.sp2, Tokens.sp3, Tokens.sp2),
+      padding: const EdgeInsets.fromLTRB(Tokens.sp3, Tokens.sp2, Tokens.sp3, Tokens.sp2),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: Tokens.contentMaxWidth),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(
-                Tokens.sp3, Tokens.sp2, Tokens.sp3, Tokens.sp1 + 2),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHigh,
               borderRadius: BorderRadius.circular(Tokens.rComposer),
@@ -85,23 +77,43 @@ class _ComposerState extends State<Composer> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildPills(state, session),
-                const SizedBox(height: Tokens.sp1),
+                // Mode segmented row
+                _buildModeRow(state, session, scheme, dark),
+                const SizedBox(height: 8),
+                // Input row
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
+                    // Attach
+                    _IconBtn(Icons.attach_file_rounded, hintColor, 'Attach'),
+                    const SizedBox(width: 4),
                     Expanded(child: _buildField()),
-                    const SizedBox(width: Tokens.sp2),
-                    _buildAction(state,
-                        online: online, busy: busy, canSend: canSend),
+                    const SizedBox(width: 6),
+                    // Send/Stop with context ring
+                    _buildAction(state, canSend, busy, ctxPct, scheme),
                   ],
                 ),
-                const SizedBox(height: Tokens.sp1),
-                Text(
-                  online
-                      ? 'Enter to send · Shift+Enter newline'
-                      : 'Offline — connect to bridge',
-                  style: TextStyle(fontSize: 11, color: hintColor),
+                const SizedBox(height: 6),
+                // Footer hints
+                Row(
+                  children: [
+                    if (online)
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        _kbd('↵', hintColor),
+                        const SizedBox(width: 2),
+                        Text('send', style: TextStyle(fontSize: 10.5, color: hintColor)),
+                        const SizedBox(width: 12),
+                        _kbd('⇧↵', hintColor),
+                        const SizedBox(width: 2),
+                        Text('newline', style: TextStyle(fontSize: 10.5, color: hintColor)),
+                      ])
+                    else
+                      Text('Offline — connect in Settings',
+                          style: TextStyle(fontSize: 10.5, color: hintColor)),
+                    const Spacer(),
+                    Text('$msgCount msgs',
+                        style: TextStyle(fontSize: 10.5, color: hintColor)),
+                  ],
                 ),
               ],
             ),
@@ -111,35 +123,63 @@ class _ComposerState extends State<Composer> {
     );
   }
 
-  // ---- Mode pills ---------------------------------------------------------
-  Widget _buildPills(AppState state, Session? session) {
+  Widget _kbd(String label, Color hint) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+        decoration: BoxDecoration(
+          color: hint.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: hint.withValues(alpha: 0.25), width: 0.5),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: hint)),
+      );
+
+  // ---- Mode segmented control --------------------------------------------------
+  Widget _buildModeRow(AppState state, Session? session, ColorScheme scheme, bool dark) {
     final yolo = session?.yolo ?? false;
     final plan = session?.planMode ?? false;
-    return Wrap(
-      spacing: Tokens.sp1,
-      runSpacing: Tokens.sp1,
+    final auto = !yolo && !plan;
+    return Row(
       children: [
-        _ModePill(
-          label: 'YOLO',
-          selected: yolo,
-          onTap: () => state.config(yolo: !yolo),
-        ),
-        _ModePill(
-          label: 'Plan',
-          selected: plan,
-          onTap: () => state.config(planMode: !plan),
-        ),
-        _ModePill(
-          label: 'Auto',
-          selected: !yolo && !plan,
-          onTap: () => state.config(yolo: false, planMode: false),
-        ),
-        _ModePill(label: 'Think', selected: _think, onTap: _toggleThink),
+        _segPillBtn('YOLO', yolo, () => state.config(yolo: !yolo), scheme, dark),
+        const SizedBox(width: 4),
+        _segPillBtn('Plan', plan, () => state.config(planMode: !plan), scheme, dark),
+        const SizedBox(width: 4),
+        _segPillBtn('Auto', auto, () => state.config(yolo: false, planMode: false), scheme, dark),
+        const SizedBox(width: 4),
+        _segPillBtn('Think', _think, () => setState(() => _think = !_think), scheme, dark),
+        const Spacer(),
+        // Voice hint
+        Icon(Icons.mic_rounded, size: 15, color: scheme.onSurface.withValues(alpha: 0.25)),
       ],
     );
   }
 
-  // ---- Text field (Enter to send on desktop, Shift+Enter for newline) -----
+  Widget _segPillBtn(String label, bool selected, VoidCallback onTap, ColorScheme scheme, bool dark) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: Tokens.durBase,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? Tokens.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: selected
+              ? null
+              : Border.all(color: scheme.outline.withValues(alpha: 0.5), width: 0.5),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : scheme.onSurface.withValues(alpha: 0.65),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---- Text field --------------------------------------------------------------
   Widget _buildField() {
     return Focus(
       onKeyEvent: (node, event) {
@@ -157,7 +197,7 @@ class _ComposerState extends State<Composer> {
         maxLines: 6,
         keyboardType: TextInputType.multiline,
         textCapitalization: TextCapitalization.sentences,
-        style: const TextStyle(fontSize: 15, height: 1.4),
+        style: const TextStyle(fontSize: 15, height: 1.45),
         decoration: const InputDecoration(
           hintText: 'Ask anything…',
           isDense: true,
@@ -165,128 +205,88 @@ class _ComposerState extends State<Composer> {
           border: InputBorder.none,
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(
-              horizontal: Tokens.sp2, vertical: Tokens.sp2),
+          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         ),
         onChanged: (_) => setState(() {}),
       ),
     );
   }
 
-  // ---- Send / Stop with the context ring behind ---------------------------
-  Widget _buildAction(
-    AppState state, {
-    required bool online,
-    required bool busy,
-    required bool canSend,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final ring = (state.activeSession?.messages.length ?? 0) % 100 / 100;
-    final tooltip = busy
-        ? 'Stop'
-        : !online
-            ? 'Connect to bridge to send'
-            : canSend
-                ? 'Send'
-                : 'Type a message';
-
-    return Tooltip(
-      message: tooltip,
-      waitDuration: const Duration(milliseconds: 600),
-      child: SizedBox(
-        width: 40,
-        height: 40,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 36,
-              height: 36,
-              child: CircularProgressIndicator(
-                value: ring,
-                strokeWidth: 1.6,
-                color: Tokens.accent,
-                backgroundColor: Colors.transparent,
-              ),
+  // ---- Send / Stop with context ring -------------------------------------------
+  Widget _buildAction(AppState state, bool canSend, bool busy, double pct, ColorScheme scheme) {
+    return SizedBox(
+      width: 34,
+      height: 34,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Context ring
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: CircularProgressIndicator(
+              value: pct,
+              strokeWidth: 1.8,
+              color: Tokens.accent.withValues(alpha: 0.5),
+              backgroundColor: scheme.outline.withValues(alpha: 0.15),
             ),
-            Material(
-              color: busy
-                  ? Tokens.danger
-                  : canSend
-                      ? Tokens.accent
-                      : scheme.surfaceContainerHighest,
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: busy
-                    ? () => state.interrupt()
-                    : canSend
-                        ? _submit
-                        : null,
-                child: SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: Icon(
-                    busy ? Icons.stop_rounded : Icons.arrow_upward_rounded,
-                    size: 17,
-                    color: busy || canSend
-                        ? Colors.white
-                        : (dark
-                            ? Tokens.darkTertiaryLabel
-                            : Tokens.lightTertiaryLabel),
+          ),
+          // Button
+          GestureDetector(
+            onTap: busy ? () => state.interrupt() : (canSend ? _submit : null),
+            child: AnimatedContainer(
+              duration: Tokens.durBase,
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: busy
+                    ? null
+                    : const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF3B9CFF), Color(0xFF0F5FD6)],
+                      ),
+                color: busy ? Tokens.danger : null,
+                boxShadow: [
+                  BoxShadow(
+                    color: (busy ? Tokens.danger : Tokens.accent).withValues(alpha: 0.35),
+                    blurRadius: 10,
+                    spreadRadius: 1,
                   ),
-                ),
+                ],
+              ),
+              child: Icon(
+                busy ? Icons.stop_rounded : Icons.arrow_upward_rounded,
+                size: 17,
+                color: Colors.white,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// Small rounded mode pill — accent-filled when selected.
-class _ModePill extends StatelessWidget {
-  const _ModePill(
-      {required this.label, required this.selected, required this.onTap});
-
+class _IconBtn extends StatelessWidget {
+  final IconData icon;
+  final Color color;
   final String label;
-  final bool selected;
-  final VoidCallback onTap;
+  const _IconBtn(this.icon, this.color, this.label);
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final hairline = Theme.of(context).dividerTheme.color ?? scheme.outline;
-    return Material(
-      color: selected ? Tokens.accentSoft : Colors.transparent,
-      borderRadius: BorderRadius.circular(Tokens.rFull),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(Tokens.rFull),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-              horizontal: Tokens.sp3, vertical: Tokens.sp1),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(Tokens.rFull),
-            border: Border.all(
-              color: selected ? Tokens.accent : hairline,
-              width: selected ? 1.0 : 0.5,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-              color: selected
-                  ? Tokens.accent
-                  : (dark
-                      ? Tokens.darkSecondaryLabel
-                      : Tokens.lightSecondaryLabel),
-            ),
+    return Tooltip(
+      message: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {},
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(icon, size: 20, color: color),
           ),
         ),
       ),

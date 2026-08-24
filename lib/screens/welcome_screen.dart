@@ -6,58 +6,171 @@ import '../theme/tokens.dart';
 import '../widgets/connection_badge.dart';
 import '../widgets/mode_card.dart';
 
-/// Welcome / empty-state screen — Grok-style centered hero with mode cards,
-/// starter chips and an offline connection card.
-class WelcomeScreen extends StatelessWidget {
+/// Welcome / empty-state — premium Grok-style landing:
+/// glowing brand, hero, rich mode cards, suggestion chips, recent sessions,
+/// keyboard hints, and a polished connection card when offline.
+class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _entrance;
+  late final Animation<double> _fade;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _entrance = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+    )..forward();
+    _fade = CurvedAnimation(parent: _entrance, curve: Curves.easeOut);
+    _slide = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _entrance, curve: Curves.easeOutCubic));
+  }
+
+  @override
+  void dispose() {
+    _entrance.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final textTheme = Theme.of(context).textTheme;
-    final online = state.connectionStatus == 'online';
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(
-            horizontal: Tokens.sp4, vertical: Tokens.sp8),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Kicker
-              const Text(
-                'KIMI CODE',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 2.2,
-                  color: Tokens.accent,
-                ),
-              ),
-              const SizedBox(height: Tokens.sp2),
-              // Hero
-              Text('Ask anything',
-                  style: textTheme.titleLarge, textAlign: TextAlign.center),
-              const SizedBox(height: Tokens.sp1),
-              Text(
-                'Chat, code, debug and research with Kimi Code.',
-                style: textTheme.bodySmall,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: Tokens.sp6),
-              const _ModeGrid(),
-              const SizedBox(height: Tokens.sp5),
-              const _StarterChips(),
-              if (!online) ...[
+    final online = state.connectionStatus == 'online';
+    final reduced = MediaQuery.disableAnimationsOf(context);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Tokens.sp5,
+        vertical: Tokens.sp8,
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620),
+        child: FadeTransition(
+          opacity: _fade,
+          child: SlideTransition(
+            position: _slide,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _BrandGlow(reduced: reduced),
                 const SizedBox(height: Tokens.sp6),
-                _ConnectionCard(status: state.connectionStatus),
+                Text(
+                  'Ask anything',
+                  style: textTheme.titleLarge?.copyWith(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: Tokens.sp2),
+                Text(
+                  'Chat, code, debug and research with Kimi Code.',
+                  style: textTheme.bodySmall?.copyWith(fontSize: 15),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: Tokens.sp8),
+                const _ModeGrid(),
+                const SizedBox(height: Tokens.sp6),
+                const _SuggestionRow(),
+                if (state.sessions.length > 1) ...[
+                  const SizedBox(height: Tokens.sp6),
+                  _RecentSessions(sessions: state.sessions),
+                ],
+                const SizedBox(height: Tokens.sp5),
+                const _KbdHints(),
+                if (!online) ...[
+                  const SizedBox(height: Tokens.sp6),
+                  _ConnectionCard(status: state.connectionStatus),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Pulsing brand glow behind the "Kimi" mark.
+class _BrandGlow extends StatefulWidget {
+  final bool reduced;
+  const _BrandGlow({required this.reduced});
+
+  @override
+  State<_BrandGlow> createState() => _BrandGlowState();
+}
+
+class _BrandGlowState extends State<_BrandGlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 3));
+    if (!widget.reduced) _c.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) {
+        final glow = 0.25 + _c.value * 0.30;
+        return Container(
+          width: 84,
+          height: 84,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                Tokens.accent.withValues(alpha: glow),
+                Tokens.accent.withValues(alpha: 0.0),
+              ],
+            ),
+          ),
+          alignment: Alignment.center,
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF3B9CFF), Color(0xFF0F5FD6)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Tokens.accent.withValues(alpha: 0.45),
+                  blurRadius: 28,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.auto_awesome_rounded,
+                color: Colors.white, size: 30),
+          ),
+        );
+      },
     );
   }
 }
@@ -69,7 +182,7 @@ class _ModeGrid extends StatelessWidget {
 
   static const List<_Mode> _kModes = [
     _Mode(
-      icon: Icons.chat_bubble_outline,
+      icon: Icons.chat_bubble_outline_rounded,
       title: 'Assistant',
       subtitle: 'Chat, code, answer',
       prompt:
@@ -90,7 +203,7 @@ class _ModeGrid extends StatelessWidget {
           'Debug the current error: investigate the root cause, explain what went wrong, then apply a minimal fix.',
     ),
     _Mode(
-      icon: Icons.travel_explore,
+      icon: Icons.travel_explore_rounded,
       title: 'Research',
       subtitle: 'Search and synthesize',
       prompt:
@@ -102,26 +215,25 @@ class _ModeGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
     return LayoutBuilder(builder: (context, constraints) {
-      final narrow = constraints.maxWidth < 460;
+      final narrow = constraints.maxWidth < 520;
       if (narrow) {
-        final w = (constraints.maxWidth - Tokens.sp2) / 2;
+        final w = (constraints.maxWidth - Tokens.sp3) / 2;
         return Wrap(
-          spacing: Tokens.sp2,
-          runSpacing: Tokens.sp2,
+          spacing: Tokens.sp3,
+          runSpacing: Tokens.sp3,
           children: [
-            for (final m in _kModes) SizedBox(width: w, child: _card(m, state))
+            for (final m in _kModes)
+              SizedBox(width: w, child: _card(m, state)),
           ],
         );
       }
-      return IntrinsicHeight(
-        child: Row(
-          children: [
-            for (var i = 0; i < _kModes.length; i++) ...[
-              if (i > 0) const SizedBox(width: Tokens.sp2),
-              Expanded(child: _card(_kModes[i], state)),
-            ]
+      return Row(
+        children: [
+          for (var i = 0; i < _kModes.length; i++) ...[
+            if (i > 0) const SizedBox(width: Tokens.sp3),
+            Expanded(child: _card(_kModes[i], state)),
           ],
-        ),
+        ],
       );
     });
   }
@@ -134,13 +246,11 @@ class _ModeGrid extends StatelessWidget {
       );
 }
 
-/// Record-like data class for mode card content.
 class _Mode {
   final IconData icon;
   final String title;
   final String subtitle;
   final String prompt;
-
   const _Mode({
     required this.icon,
     required this.title,
@@ -149,15 +259,17 @@ class _Mode {
   });
 }
 
-// ---- Starter chips ----------------------------------------------------------
+// ---- Suggestion chips -------------------------------------------------------
 
-class _StarterChips extends StatelessWidget {
-  const _StarterChips();
+class _SuggestionRow extends StatelessWidget {
+  const _SuggestionRow();
 
-  static const List<String> _kChips = [
-    'Explain this codebase',
-    'Plan a feature',
-    'Debug an error',
+  static const List<({IconData icon, String label})> _kChips = [
+    (icon: Icons.terminal_rounded, label: 'Explain this codebase'),
+    (icon: Icons.flag_outlined, label: 'Plan a feature'),
+    (icon: Icons.bug_report_outlined, label: 'Debug an error'),
+    (icon: Icons.edit_note_rounded, label: 'Write a test'),
+    (icon: Icons.bolt_outlined, label: 'Optimize performance'),
   ];
 
   @override
@@ -165,9 +277,7 @@ class _StarterChips extends StatelessWidget {
     final state = context.read<AppState>();
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final hairline = Theme.of(context).dividerTheme.color ?? scheme.outline;
-    final chipColor =
-        dark ? Tokens.darkSecondaryLabel : Tokens.lightSecondaryLabel;
+    final chipColor = dark ? Tokens.darkSecondaryLabel : Tokens.lightSecondaryLabel;
     return Wrap(
       spacing: Tokens.sp2,
       runSpacing: Tokens.sp2,
@@ -179,23 +289,22 @@ class _StarterChips extends StatelessWidget {
             borderRadius: BorderRadius.circular(Tokens.rFull),
             child: InkWell(
               borderRadius: BorderRadius.circular(Tokens.rFull),
-              onTap: () => state.sendPrompt(c),
+              onTap: () => state.sendPrompt(c.label),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: Tokens.sp3 + 2,
-                  vertical: Tokens.sp2 - 2,
-                ),
+                    horizontal: Tokens.sp3 + 2, vertical: Tokens.sp2),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(Tokens.rFull),
-                  border: Border.all(color: hairline, width: 0.5),
+                  border: Border.all(color: scheme.outline.withValues(alpha: 0.6), width: 0.5),
                 ),
-                child: Text(
-                  c,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: chipColor,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(c.icon, size: 13, color: Tokens.accent),
+                    const SizedBox(width: 6),
+                    Text(c.label,
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: chipColor)),
+                  ],
                 ),
               ),
             ),
@@ -205,25 +314,139 @@ class _StarterChips extends StatelessWidget {
   }
 }
 
-// ---- Offline connection card ------------------------------------------------
+// ---- Recent sessions ----------------------------------------------------------
+
+class _RecentSessions extends StatelessWidget {
+  final List sessions;
+  const _RecentSessions({required this.sessions});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final recent = sessions.take(3).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: Tokens.sp2),
+          child: Text(
+            'RECENT',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.2,
+              color: scheme.onSurface.withValues(alpha: 0.45),
+            ),
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(Tokens.rCard),
+            border: Border.all(color: scheme.outline.withValues(alpha: 0.5), width: 0.5),
+          ),
+          child: Column(
+            children: [
+              for (var i = 0; i < recent.length; i++) ...[
+                if (i > 0)
+                  Divider(height: 0.5, thickness: 0.5,
+                      color: scheme.outline.withValues(alpha: 0.4)),
+                InkWell(
+                  onTap: () => state.selectSessionById(recent[i].id),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: Tokens.sp4, vertical: Tokens.sp3),
+                    child: Row(
+                      children: [
+                        Icon(Icons.history_rounded, size: 16,
+                            color: scheme.onSurface.withValues(alpha: 0.4)),
+                        const SizedBox(width: Tokens.sp3),
+                        Expanded(
+                          child: Text(
+                            (recent[i] as dynamic).name as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.bodyMedium?.copyWith(fontSize: 14),
+                          ),
+                        ),
+                        Text(
+                          _relTime((recent[i] as dynamic).updatedAt as DateTime),
+                          style: textTheme.bodySmall?.copyWith(fontSize: 12),
+                        ),
+                        const SizedBox(width: Tokens.sp1),
+                        Icon(Icons.chevron_right, size: 16,
+                            color: scheme.onSurface.withValues(alpha: 0.3)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _relTime(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'now';
+    if (d.inHours < 1) return '${d.inMinutes}m ago';
+    if (d.inDays < 1) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
+  }
+}
+
+// ---- Keyboard hints ------------------------------------------------------------
+
+class _KbdHints extends StatelessWidget {
+  const _KbdHints();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final muted = scheme.onSurface.withValues(alpha: 0.4);
+    Widget kbd(String label) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: scheme.outline.withValues(alpha: 0.6), width: 0.5),
+          ),
+          child: Text(label,
+              style: TextStyle(fontSize: 10.5, color: muted, fontWeight: FontWeight.w600)),
+        );
+    return Wrap(
+      spacing: Tokens.sp3,
+      runSpacing: Tokens.sp2,
+      alignment: WrapAlignment.center,
+      children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [kbd('⌘'), const SizedBox(width: 2), kbd('N'), const SizedBox(width: 5), Text('New chat', style: TextStyle(fontSize: 11.5, color: muted))]),
+        Row(mainAxisSize: MainAxisSize.min, children: [kbd('⌘'), const SizedBox(width: 2), kbd('K'), const SizedBox(width: 5), Text('Command', style: TextStyle(fontSize: 11.5, color: muted))]),
+      ],
+    );
+  }
+}
+
+// ---- Offline connection card ------------------------------------------------------
 
 class _ConnectionCard extends StatelessWidget {
   const _ConnectionCard({required this.status});
-
   final String status;
 
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
     final scheme = Theme.of(context).colorScheme;
-    final hairline = Theme.of(context).dividerTheme.color ?? scheme.outline;
     final textTheme = Theme.of(context).textTheme;
     return Container(
       padding: const EdgeInsets.all(Tokens.sp4),
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(Tokens.rCard),
-        border: Border.all(color: hairline, width: 0.5),
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.6), width: 0.5),
       ),
       child: Row(
         children: [
@@ -242,11 +465,10 @@ class _ConnectionCard extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: Tokens.sp3),
           FilledButton.icon(
             onPressed: () => state.connect(),
             icon: const Icon(Icons.link_rounded, size: 15),
-            label: const Text('Connect to bridge'),
+            label: const Text('Connect'),
           ),
         ],
       ),

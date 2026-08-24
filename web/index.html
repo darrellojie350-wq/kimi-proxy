@@ -19,6 +19,22 @@
 </head>
 <body>
   <div class="loading" id="loading">Loading Kimi Proxy…</div>
+  <script>
+    // Bootstrap error trap — surfaces startup failures for debugging.
+    window.__bootErrors = [];
+    window.addEventListener('error', function (e) {
+      window.__bootErrors.push(String(e.message || e.error || '').slice(0, 400));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      window.__bootErrors.push('rejection: ' + String(e.reason).slice(0, 400));
+    });
+    setTimeout(function () {
+      if (window.__bootErrors && window.__bootErrors.length) {
+        var el = document.getElementById('loading');
+        if (el) { el.textContent = 'Boot error: ' + window.__bootErrors.join(' | '); el.style.whiteSpace = 'pre-wrap'; el.style.maxWidth = '80vw'; }
+      }
+    }, 10000);
+  </script>
   <script src="flutter_bootstrap.js" async></script>
   <script>
     // Clear the legacy PWA service worker (webapp era) that cache-first serves

@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../services/app_state.dart';
 import '../theme/tokens.dart';
 import '../widgets/composer.dart';
-import '../widgets/connection_badge.dart';
 import 'chat_screen.dart';
 import 'session_panel.dart';
 import 'settings_screen.dart';
@@ -99,6 +98,7 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final scheme = Theme.of(context).colorScheme;
+    final online = state.connectionStatus == 'online';
 
     return Container(
       height: Tokens.headerHeight,
@@ -124,20 +124,72 @@ class _Header extends StatelessWidget {
               ),
               const SizedBox(width: Tokens.sp1),
             ],
+            // Brand badge
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF3B9CFF), Color(0xFF0F5FD6)],
+                ),
+              ),
+              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 15),
+            ),
+            const SizedBox(width: Tokens.sp2),
             Expanded(
-              child: Text(
-                state.activeSession?.name ?? 'Kimi Proxy',
+              child: RichText(
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                  color: scheme.onSurface,
+                text: TextSpan(
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.2,
+                    color: scheme.onSurface,
+                  ),
+                  children: [
+                    TextSpan(text: state.activeSession?.name ?? 'Kimi Proxy'),
+                    if (online)
+                      TextSpan(
+                        text: ' ●',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Tokens.success,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(width: Tokens.sp3),
+            const SizedBox(width: Tokens.sp2),
+            // Status label
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: online
+                    ? Tokens.success.withValues(alpha: 0.12)
+                    : Tokens.danger.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: (online ? Tokens.success : Tokens.danger).withValues(alpha: 0.2),
+                  width: 0.5,
+                ),
+              ),
+              child: Text(
+                online ? 'Online' : 'Offline',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  color: online ? Tokens.success : Tokens.danger,
+                ),
+              ),
+            ),
+            const SizedBox(width: Tokens.sp2),
+            // Model pill
             _ModelPill(
               label: state.activeSession?.model ?? 'kimi',
               onTap: () => Navigator.push(
@@ -145,9 +197,8 @@ class _Header extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const SettingsScreen()),
               ),
             ),
-            const SizedBox(width: Tokens.sp3),
-            ConnectionBadge(status: state.connectionStatus),
             const SizedBox(width: Tokens.sp1),
+            // Settings
             IconButton(
               onPressed: () => Navigator.push(
                 context,
