@@ -21,6 +21,21 @@
   <div class="loading" id="loading">Loading Kimi Proxy…</div>
   <script src="flutter_bootstrap.js" async></script>
   <script>
+    // Clear the legacy PWA service worker (webapp era) that cache-first serves
+    // the old shell and would mask this Flutter app indefinitely.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        for (const r of regs) {
+          const scope = r.scope || '';
+          if (scope.includes('/kimi-proxy/')) r.unregister();
+        }
+      }).catch(() => {});
+      if (window.caches && caches.keys) {
+        caches.keys().then((keys) => {
+          for (const k of keys) if (!k.includes('flutter')) caches.delete(k);
+        }).catch(() => {});
+      }
+    }
     window.addEventListener('flutter-first-frame', () => {
       const el = document.getElementById('loading');
       if (el) el.remove();
