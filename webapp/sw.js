@@ -3,7 +3,7 @@
  * (fonts, KaTeX CDN). Versioned cache name; prune stale caches on activate. */
 'use strict';
 
-var CACHE_NAME = 'kimi-proxy-v2';
+var CACHE_NAME = 'kimi-proxy-v3';
 
 var PRECACHE_URLS = [
   './',

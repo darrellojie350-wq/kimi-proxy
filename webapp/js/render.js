@@ -723,25 +723,45 @@
 
   /**
    * emptyState() -> HTMLElement
-   * Centered welcome hero with sparkles icon, title, hint, new-chat button,
-   * and starter suggestion chips (data-prompt for app.js wiring).
+   * Grok-style welcome: hero + mode cards + suggestion chips.
+   * Mode cards carry data-prompt for app.js wiring (click -> composer.send).
    */
   function emptyState() {
     var box = h('div', { class: 'empty-state' });
-    var hero = h('div', { class: 'welcome-hero', style: { textAlign: 'center', padding: '48px 16px 24px' } });
-    hero.appendChild(icon('sparkles', 48, '--color-text-dim'));
-    hero.appendChild(h('h2', { style: { fontSize: '18px', fontWeight: '600', color: 'var(--color-text)', margin: '16px 0 4px' } }, 'Start a conversation'));
-    hero.appendChild(h('p', { style: { fontSize: '14px', color: 'var(--color-text-muted)', margin: '0 0 20px', lineHeight: '1.5' } }, 'Ask anything \u2014 Kimi Code will think, read files, and run commands.'));
-    // primary new-chat button
+    var hero = h('div', { class: 'welcome-hero', style: { textAlign: 'center', padding: '40px 16px 12px' } });
+    hero.appendChild(h('div', { class: 'welcome-kicker', style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-accent)', marginBottom: '8px' } }, 'Kimi Code'));
+    hero.appendChild(h('h2', { style: { fontSize: '24px', fontWeight: '700', color: 'var(--color-text)', margin: '0 0 6px', letterSpacing: '-0.01em' } }, 'Ask anything'));
+    hero.appendChild(h('p', { style: { fontSize: '14px', color: 'var(--color-text-muted)', margin: '0 0 18px', lineHeight: '1.5', maxWidth: '440px' } }, 'Kimi thinks, reads your files, runs commands, and finishes the job.'));
     hero.appendChild(h('button', { type: 'button', class: 'new-chat-btn', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 20px', borderRadius: '999px', border: 'none', background: 'var(--color-text)', color: 'var(--color-bg)', fontFamily: 'var(--font-ui)', fontWeight: '600', fontSize: '14px', cursor: 'pointer' } }, 'New chat'));
     box.appendChild(hero);
 
-    var chips = h('div', { class: 'starter-chips', style: { display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap', padding: '0 16px 32px' } });
+    // Grok-style mode cards
+    var modes = [
+      { icon: 'sparkles', title: 'Assistant', sub: 'Chat, code, answer', prompt: 'Start a session and give me a quick overview of this workspace.' },
+      { icon: 'target', title: 'Plan', sub: 'Design before acting', prompt: 'Plan this task step by step before doing any work.' },
+      { icon: 'terminal', title: 'Debug', sub: 'Find and fix errors', prompt: 'Help me debug the current issue: investigate, reproduce, and fix it.' },
+      { icon: 'globe', title: 'Research', sub: 'Search and synthesize', prompt: 'Research this topic on the web and give me a synthesis with sources.' }
+    ];
+    var cards = h('div', { class: 'mode-cards' });
+    modes.forEach(function (m) {
+      var card = h('button', {
+        type: 'button', class: 'mode-card',
+        dataset: { prompt: m.prompt, mode: m.title.toLowerCase() },
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '5px', padding: '14px 14px 12px', borderRadius: 'var(--radius-lg)', background: 'var(--color-well)', border: '0.5px solid var(--color-hairline)', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font-ui)', transition: 'transform 160ms var(--ease-out), border-color 160ms, background 160ms, box-shadow 160ms' }
+      });
+      card.appendChild(h('span', { class: 'mc-icon', style: { color: 'var(--color-accent)', display: 'inline-flex' } }, icon(m.icon, 22, '--color-accent')));
+      card.appendChild(h('span', { class: 'mode-card-title', style: { fontSize: '14px', fontWeight: '600', color: 'var(--color-text)' } }, m.title));
+      card.appendChild(h('span', { class: 'mode-card-sub', style: { fontSize: '11px', color: 'var(--color-text-dim)', lineHeight: '1.4' } }, m.sub));
+      cards.appendChild(card);
+    });
+    box.appendChild(cards);
+
+    var chips = h('div', { class: 'starter-chips', style: { display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap', padding: '14px 16px 32px' } });
     ['Explain this codebase', 'Plan a feature', 'Debug an error'].forEach(function (p) {
       chips.appendChild(h('button', {
         type: 'button', class: 'starter-chip',
         dataset: { prompt: p },
-        style: { padding: '6px 14px', borderRadius: '999px', border: '0.5px solid var(--color-hairline)', background: 'var(--color-well)', color: 'var(--color-text-muted)', fontFamily: 'var(--font-ui)', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }
+        style: { padding: '6px 14px', borderRadius: '999px', border: '0.5px solid var(--color-hairline)', background: 'transparent', color: 'var(--color-text-muted)', fontFamily: 'var(--font-ui)', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background 160ms var(--ease-out), color 160ms' }
       }, p));
     });
     box.appendChild(chips);

@@ -248,6 +248,12 @@
           if (Kimi.composer) Kimi.composer.send(chips[i].dataset.prompt || chips[i].textContent);
         });
       }
+      const modeCards = box.querySelectorAll('.mode-card');
+      for (let i = 0; i < modeCards.length; i++) {
+        modeCards[i].addEventListener('click', () => {
+          if (Kimi.composer) Kimi.composer.send(modeCards[i].dataset.prompt || '');
+        });
+      }
       els.chatList.appendChild(box);
       return;
     }
@@ -591,6 +597,7 @@
       const s = Kimi.sessions.get(d.sessionId);
       if (!s) return;
       s.status = d.status;
+      updateWorkIndicator();
       if (d.status === 'idle' || d.status === 'error') finalizeTurn(s, d);
     });
 
@@ -602,8 +609,28 @@
         Kimi.toast.error('Turn failed (code ' + d.code + ')');
       }
       if (d.durationMs) s._lastDurationMs = d.durationMs;
+      updateWorkIndicator();
       finalizeTurn(s, d);
     });
+  }
+
+  /* ---------- Grok-style live "Working" indicator ---------- */
+  function updateWorkIndicator() {
+    const el = document.getElementById('work-indicator');
+    if (!el) return;
+    const s = Kimi.sessions.current && Kimi.sessions.current();
+    const busy = s && (s.status === 'streaming' || s.status === 'thinking' || s.status === 'toolRunning');
+    const label = el.querySelector('.wi-label');
+    if (busy) {
+      el.hidden = false;
+      el.classList.add('active');
+      if (label) {
+        label.textContent = s.status === 'thinking' ? 'Thinking' : (s.status === 'toolRunning' ? 'Running tools' : 'Working');
+      }
+    } else {
+      el.hidden = true;
+      el.classList.remove('active');
+    }
   }
 
   /* ---------- turn finalization ---------- */

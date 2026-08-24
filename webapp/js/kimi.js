@@ -228,6 +228,10 @@
       for (var i = 0; i < Kimi.state.sessions.length; i++) {
         if (Kimi.state.sessions[i].id === id) return Kimi.state.sessions[i];
       }
+      // wire events carry the server id for locally-created sessions
+      for (var j = 0; j < Kimi.state.sessions.length; j++) {
+        if (Kimi.state.sessions[j].serverId === id) return Kimi.state.sessions[j];
+      }
       return null;
     },
 
