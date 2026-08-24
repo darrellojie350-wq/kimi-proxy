@@ -1,96 +1,164 @@
-import 'package:uuid/uuid.dart';
+import 'dart:convert';
 
-enum SessionStatus { idle, streaming, thinking, toolRunning, error, disconnected }
-
-class KimiSession {
+class Session {
   final String id;
   String name;
-  String workDir;
-  SessionStatus status;
+  String? serverId;
+  String? workDir;
+  String? model;
+  String status; // idle, streaming, thinking, toolRunning, error
+  bool yolo;
+  bool planMode;
+  bool thinkingEnabled;
   DateTime createdAt;
   DateTime updatedAt;
   int messageCount;
   bool pinned;
-  String? model;
-  bool yolo;
-  bool planMode;
-  bool thinkingEnabled;
+  List<Message> messages;
+  List<ToolEntry> tools;
+  String? kimiSessionId;
 
-  KimiSession({
-    String? id,
-    this.name = 'New Session',
-    this.workDir = '.',
-    this.status = SessionStatus.idle,
+  Session({
+    required this.id,
+    String? name,
+    this.serverId,
+    this.workDir,
+    this.model,
+    this.status = 'idle',
+    this.yolo = true,
+    this.planMode = false,
+    this.thinkingEnabled = true,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.messageCount = 0,
     this.pinned = false,
-    this.model,
-    this.yolo = true,
-    this.planMode = false,
-    this.thinkingEnabled = true,
-  })  : id = id ?? const Uuid().v4(),
+    List<Message>? messages,
+    List<ToolEntry>? tools,
+    this.kimiSessionId,
+  })  : name = name ?? 'Session ${id.length > 6 ? id.substring(0, 6) : id}',
         createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now();
+        updatedAt = updatedAt ?? DateTime.now(),
+        messages = messages ?? [],
+        tools = tools ?? [];
 
-  KimiSession copyWith({
-    String? name,
-    String? workDir,
-    SessionStatus? status,
-    DateTime? updatedAt,
-    int? messageCount,
-    bool? pinned,
-    String? model,
-    bool? yolo,
-    bool? planMode,
-    bool? thinkingEnabled,
-  }) {
-    return KimiSession(
-      id: id,
-      name: name ?? this.name,
-      workDir: workDir ?? this.workDir,
-      status: status ?? this.status,
-      createdAt: createdAt,
-      updatedAt: updatedAt ?? DateTime.now(),
-      messageCount: messageCount ?? this.messageCount,
-      pinned: pinned ?? this.pinned,
-      model: model ?? this.model,
-      yolo: yolo ?? this.yolo,
-      planMode: planMode ?? this.planMode,
-      thinkingEnabled: thinkingEnabled ?? this.thinkingEnabled,
-    );
-  }
+  Message? get lastMessage => messages.isEmpty ? null : messages.last;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'serverId': serverId,
         'workDir': workDir,
-        'status': status.name,
+        'model': model,
+        'status': status,
+        'yolo': yolo,
+        'planMode': planMode,
+        'thinkingEnabled': thinkingEnabled,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'messageCount': messageCount,
         'pinned': pinned,
-        'model': model,
-        'yolo': yolo,
-        'planMode': planMode,
-        'thinkingEnabled': thinkingEnabled,
+        'kimiSessionId': kimiSessionId,
+        'messages': messages.map((m) => m.toJson()).toList(),
+        'tools': tools.map((t) => t.toJson()).toList(),
       };
 
-  factory KimiSession.fromJson(Map<String, dynamic> j) => KimiSession(
-        id: j['id'],
-        name: j['name'] ?? 'Session',
-        workDir: j['workDir'] ?? '.',
-        status: SessionStatus.values.firstWhere(
-          (e) => e.name == j['status'],
-          orElse: () => SessionStatus.idle,
-        ),
-        createdAt: DateTime.tryParse(j['createdAt'] ?? '') ?? DateTime.now(),
-        updatedAt: DateTime.tryParse(j['updatedAt'] ?? '') ?? DateTime.now(),
-        messageCount: j['messageCount'] ?? 0,
-        pinned: j['pinned'] ?? false,
-        model: j['model'],
-        yolo: j['yolo'] ?? true,
-        planMode: j['planMode'] ?? false,
-        thinkingEnabled: j['thinkingEnabled'] ?? true,
+  factory Session.fromJson(Map<String, dynamic> j) => Session(
+        id: j['id'] as String,
+        name: j['name'] as String?,
+        serverId: j['serverId'] as String?,
+        workDir: j['workDir'] as String?,
+        model: j['model'] as String?,
+        status: j['status'] as String? ?? 'idle',
+        yolo: j['yolo'] as bool? ?? true,
+        planMode: j['planMode'] as bool? ?? false,
+        thinkingEnabled: j['thinkingEnabled'] as bool? ?? true,
+        createdAt: j['createdAt'] != null ? DateTime.parse(j['createdAt'] as String) : null,
+        updatedAt: j['updatedAt'] != null ? DateTime.parse(j['updatedAt'] as String) : null,
+        messageCount: j['messageCount'] as int? ?? 0,
+        pinned: j['pinned'] as bool? ?? false,
+        kimiSessionId: j['kimiSessionId'] as String?,
+        messages: (j['messages'] as List?)?.map((m) => Message.fromJson(m as Map<String, dynamic>)).toList(),
+        tools: (j['tools'] as List?)?.map((t) => ToolEntry.fromJson(t as Map<String, dynamic>)).toList(),
       );
+}
+
+class Message {
+  final String id;
+  final String role; // user, assistant, system
+  String content;
+  String? thinking;
+  bool streaming;
+  DateTime ts;
+
+  Message({
+    required this.id,
+    required this.role,
+    this.content = '',
+    this.thinking,
+    this.streaming = false,
+    DateTime? ts,
+  }) : ts = ts ?? DateTime.now();
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'role': role,
+        'content': content,
+        'thinking': thinking,
+        'streaming': streaming,
+        'ts': ts.toIso8601String(),
+      };
+
+  factory Message.fromJson(Map<String, dynamic> j) => Message(
+        id: j['id'] as String,
+        role: j['role'] as String? ?? 'assistant',
+        content: j['content'] as String? ?? '',
+        thinking: j['thinking'] as String?,
+        streaming: j['streaming'] as bool? ?? false,
+        ts: j['ts'] != null ? DateTime.tryParse(j['ts'] as String) : null,
+      );
+}
+
+class ToolEntry {
+  final String id;
+  final String name;
+  final Map<String, dynamic> arguments;
+  String status; // pending, running, success, failed
+  String? output;
+  int? startedAt;
+  int? durationMs;
+
+  ToolEntry({
+    required this.id,
+    required this.name,
+    required this.arguments,
+    this.status = 'pending',
+    this.output,
+    this.startedAt,
+    this.durationMs,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'arguments': arguments,
+        'status': status,
+        'output': output,
+        'startedAt': startedAt,
+        'durationMs': durationMs,
+      };
+
+  factory ToolEntry.fromJson(Map<String, dynamic> j) => ToolEntry(
+        id: j['id'] as String,
+        name: j['name'] as String? ?? 'tool',
+        arguments: (j['arguments'] as Map?)?.cast<String, dynamic>() ?? const {},
+        status: j['status'] as String? ?? 'pending',
+        output: j['output'] as String?,
+        startedAt: j['startedAt'] as int?,
+        durationMs: j['durationMs'] as int?,
+      );
+
+  String get argsPreview {
+    final s = jsonEncode(arguments);
+    return s.length > 60 ? '${s.substring(0, 60)}…' : s;
+  }
 }

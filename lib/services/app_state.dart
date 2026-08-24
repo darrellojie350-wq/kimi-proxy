@@ -1,256 +1,372 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/session.dart';
-import '../models/message.dart';
 import 'bridge_service.dart';
-import 'openai_stream.dart';
 
-enum ChatBackend { direct, bridge }
-
+/// Central state for Kimi Proxy — a ChangeNotifier that bridges WebSocket
+/// events to the UI model and persists settings.
 class AppState extends ChangeNotifier {
   final BridgeService bridge = BridgeService();
-  late OpenAIStreamService direct;
-
-  final List<KimiSession> sessions = [];
-  KimiSession? activeSession;
-  final Map<String, List<ChatMessage>> messages = {};
-
-  String? bridgeUrl;
-  bool connecting = false;
-  String? connectionError;
-  double? latencyMs;
+  final List<Session> sessions = [];
+  Session? activeSession;
   StreamSubscription? _sub;
+  SharedPreferences? _prefs;
+  bool _initialized = false;
 
-  ChatBackend backend = ChatBackend.bridge;
-  String selectedModel = 'gpt-4.1-nano';
-  bool swarmMode = false;
-  final List<String> swarmModels = ['gpt-4.1-nano', 'gpt-4.1-mini', 'gpt-4o-mini'];
-  bool isGenerating = false;
-  StreamSubscription? _genSub;
+  // Secure quick-tunnel endpoint for the current Kimi CLI bridge deployment.
+  // Users can replace it from Settings with a permanent VPS URL.
+  String _bridgeUrl = 'wss://blast-sought-safe-pixel.trycloudflare.com';
+  String get bridgeUrl => _bridgeUrl;
+  String _theme = 'dark';
+  String get theme => _theme;
+  String _fontSize = 'medium';
+  String get fontSize => _fontSize;
+  final String _defaultModel = 'kimi';
+  String get defaultModel => _defaultModel;
 
-  String directBaseUrl = ProviderPresets.chatAnywhere.baseUrl;
-  String directApiKey = ProviderPresets.chatAnywhere.apiKey;
+  String get connectionStatus => bridge.isConnected ? 'online' : 'offline';
 
   Future<void> init() async {
-    bridgeUrl = 'ws://85.121.148.62:9876';
-    direct = OpenAIStreamService(baseUrl: directBaseUrl, apiKey: directApiKey);
+    if (_initialized) return;
+    _initialized = true;
+    _prefs = await SharedPreferences.getInstance();
+    _bridgeUrl = _prefs!.getString('bridgeUrl') ?? _bridgeUrl;
+    _theme = _prefs!.getString('theme') ?? 'dark';
+    _fontSize = _prefs!.getString('fontSize') ?? 'medium';
+
     _sub = bridge.events.listen(_onBridgeEvent);
     _ensureLocalSession();
-    if (!BridgeService.isMixedContentBlocked(bridgeUrl!)) {
-      unawaited(connect());
+    notifyListeners();
+    // Make the preview/app usable on first launch. The endpoint remains
+    // editable in Settings for a permanent VPS or named tunnel.
+    unawaited(connect());
+  }
+
+  void setBridgeUrl(String url) {
+    _bridgeUrl = url;
+    _prefs?.setString('bridgeUrl', url);
+    notifyListeners();
+  }
+
+  void setTheme(String t) {
+    _theme = t;
+    _prefs?.setString('theme', t);
+    notifyListeners();
+  }
+
+  /// Connect to the bridge. Call after settings are configured.
+  Future<void> connect() async {
+    if (_bridgeUrl.isEmpty) return;
+    await bridge.connect(_bridgeUrl);
+  }
+
+  void disconnect() => bridge.disconnect();
+
+  Session createSession({String? name, String? model}) {
+    final id = const Uuid().v4();
+    final s = Session(id: id, name: name, model: model ?? _defaultModel);
+    sessions.add(s);
+    selectSession(s);
+    // If online, bridge will echo and adopt
+    if (bridge.isConnected) {
+      bridge.createSession(name: name, model: model);
     }
+    return s;
+  }
+
+  void selectSession(Session s) {
+    activeSession = s;
+    notifyListeners();
+  }
+
+  void selectSessionById(String id) {
+    final s = sessions.where((x) => x.id == id || x.serverId == id).firstOrNull;
+    if (s != null) selectSession(s);
+  }
+
+  void deleteSession(String sessionId) {
+    sessions.removeWhere((s) => s.id == sessionId || s.serverId == sessionId);
+    if (activeSession != null &&
+        (activeSession!.id == sessionId || activeSession!.serverId == sessionId)) {
+      activeSession = sessions.isNotEmpty ? sessions.last : null;
+    }
+    if (bridge.isConnected) bridge.deleteSession(sessionId);
+    notifyListeners();
+  }
+
+  void sendPrompt(String text) {
+    if (activeSession == null) return;
+    final msg = Message(
+      id: const Uuid().v4(),
+      role: 'user',
+      content: text,
+    );
+    activeSession!.messages.add(msg);
+    activeSession!.status = 'streaming';
+    // Create placeholder assistant message
+    final assistant = Message(id: const Uuid().v4(), role: 'assistant', streaming: true);
+    activeSession!.messages.add(assistant);
+    notifyListeners();
+    if (bridge.isConnected) {
+      bridge.sendPrompt(activeSession!.serverId ?? activeSession!.id, text);
+    }
+  }
+
+  void interrupt() {
+    if (activeSession == null) return;
+    bridge.interrupt(activeSession!.serverId ?? activeSession!.id);
+  }
+
+  void config({bool? yolo, bool? planMode, String? model}) {
+    if (activeSession == null) return;
+    if (yolo != null) activeSession!.yolo = yolo;
+    if (planMode != null) activeSession!.planMode = planMode;
+    if (model != null) activeSession!.model = model;
+    if (bridge.isConnected) {
+      bridge.config(
+        activeSession!.serverId ?? activeSession!.id,
+        yolo: yolo,
+        planMode: planMode,
+        model: model,
+      );
+    }
+    notifyListeners();
+  }
+
+  // ---- Bridge event handling -----------------------------------------------
+  void _onBridgeEvent(BridgeEvent ev) {
+    final d = ev.data;
+    switch (ev.type) {
+      case 'session.list':
+        final list = d['sessions'] as List?;
+        if (list != null) {
+          for (final j in list) {
+            _adoptOrUpdate(j as Map<String, dynamic>);
+          }
+          notifyListeners();
+        }
+        break;
+      case 'session.created':
+        _adoptOrUpdate(d['session'] as Map<String, dynamic>? ?? {});
+        notifyListeners();
+        break;
+      case 'session.deleted':
+        final sid = d['sessionId'] as String?;
+        if (sid != null) {
+          sessions.removeWhere((s) => s.id == sid || s.serverId == sid);
+          if (activeSession != null &&
+              (activeSession!.id == sid || activeSession!.serverId == sid)) {
+            activeSession = sessions.isNotEmpty ? sessions.last : null;
+          }
+          notifyListeners();
+        }
+        break;
+      case 'session.renamed':
+        _updateSessionFromServer(d['session'] as Map<String, dynamic>? ?? {});
+        notifyListeners();
+        break;
+      case 'status':
+        final sid = d['sessionId'] as String?;
+        final s = _findSession(sid);
+        if (s != null) {
+          s.status = d['status'] as String? ?? s.status;
+          if (d['session'] is Map) _updateSessionFromServer(d['session'] as Map<String, dynamic>);
+          notifyListeners();
+        }
+        break;
+      case 'content.delta':
+        _handleDelta(d, 'content');
+        break;
+      case 'thinking.delta':
+        _handleDelta(d, 'thinking');
+        break;
+      case 'tool.call':
+        _handleToolCall(d);
+        break;
+      case 'tool.output':
+        _handleToolOutput(d);
+        break;
+      case 'tool.status':
+        _handleToolStatus(d);
+        break;
+      case 'turn.complete':
+        final sid = d['sessionId'] as String?;
+        final s = _findSession(sid);
+        if (s != null) {
+          s.status = 'idle';
+          // Finalize the streaming assistant message
+          for (final m in s.messages.reversed) {
+            if (m.streaming) {
+              m.streaming = false;
+              break;
+            }
+          }
+          s.messageCount++;
+          s.updatedAt = DateTime.now();
+          notifyListeners();
+        }
+        break;
+      case 'error':
+        final sid = d['sessionId'] as String?;
+        final s = _findSession(sid);
+        if (s != null) s.status = 'error';
+        notifyListeners();
+        break;
+      case 'connection.change':
+        if (d['status'] == 'online' && bridge.isConnected) {
+          bridge.listSessions();
+        }
+        notifyListeners();
+        break;
+    }
+  }
+
+  void _handleDelta(Map<String, dynamic> d, String field) {
+    final sid = d['sessionId'] as String?;
+    final delta = d['delta'] as String?;
+    final s = _findSession(sid);
+    if (s == null || delta == null || delta.isEmpty) return;
+    if (s.messages.isEmpty) {
+      final msg = Message(id: const Uuid().v4(), role: 'assistant', streaming: true);
+      s.messages.add(msg);
+    }
+    final last = s.messages.last;
+    if (field == 'thinking') {
+      last.thinking = (last.thinking ?? '') + delta;
+    } else {
+      last.content += delta;
+    }
+    s.status = field == 'thinking' ? 'thinking' : 'streaming';
+    notifyListeners();
+  }
+
+  void _handleToolCall(Map<String, dynamic> d) {
+    final sid = d['sessionId'] as String?;
+    final s = _findSession(sid);
+    if (s == null) return;
+    final entry = ToolEntry(
+      id: d['toolCallId'] as String? ?? const Uuid().v4(),
+      name: d['name'] as String? ?? 'tool',
+      arguments: (d['arguments'] as Map?)?.cast<String, dynamic>() ?? {},
+      status: 'running',
+      startedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    s.tools.add(entry);
+    s.status = 'toolRunning';
+    notifyListeners();
+  }
+
+  void _handleToolOutput(Map<String, dynamic> d) {
+    final sid = d['sessionId'] as String?;
+    final s = _findSession(sid);
+    if (s == null) return;
+    final tid = d['toolCallId'] as String?;
+    final output = d['output'] as String?;
+    for (final t in s.tools) {
+      if (t.id == tid) {
+        t.output = output;
+        break;
+      }
+    }
+    notifyListeners();
+  }
+
+  void _handleToolStatus(Map<String, dynamic> d) {
+    final sid = d['sessionId'] as String?;
+    final s = _findSession(sid);
+    if (s == null) return;
+    final tid = d['toolCallId'] as String?;
+    final status = d['status'] as String? ?? 'success';
+    for (final t in s.tools) {
+      if (t.id == tid) {
+        t.status = status;
+        t.durationMs = d['durationMs'] as int?;
+        break;
+      }
+    }
+    notifyListeners();
+  }
+
+  Session? _findSession(String? id) {
+    if (id == null) return null;
+    for (final s in sessions) {
+      if (s.id == id || s.serverId == id) return s;
+    }
+    return null;
+  }
+
+  void _adoptOrUpdate(Map<String, dynamic> j) {
+    final serverId = j['id'] as String?;
+    if (serverId == null) return;
+    // Try to match by serverId (local session awaiting echo)
+    for (final s in sessions) {
+      if (s.serverId == serverId) {
+        _updateSessionFromJson(s, j);
+        return;
+      }
+    }
+    // Match by name + no serverId (pending local)
+    for (final s in sessions) {
+      final name = j['name'] as String?;
+      if (s.serverId == null && name != null && s.name == name) {
+        s.serverId = serverId;
+        _updateSessionFromJson(s, j);
+        return;
+      }
+    }
+    // New session from server
+    final ns = Session(
+      id: serverId,
+      serverId: serverId,
+      name: j['name'] as String?,
+      status: j['status'] as String? ?? 'idle',
+      model: j['model'] as String?,
+      yolo: j['yolo'] as bool? ?? true,
+      planMode: j['planMode'] as bool? ?? false,
+      createdAt: _parseDate(j['createdAt']),
+      updatedAt: _parseDate(j['updatedAt']),
+      messageCount: j['messageCount'] as int? ?? 0,
+    );
+    sessions.add(ns);
+  }
+
+  void _updateSessionFromJson(Session s, Map<String, dynamic> j) {
+    s.name = j['name'] as String? ?? s.name;
+    s.status = j['status'] as String? ?? s.status;
+    s.model = j['model'] as String? ?? s.model;
+    s.yolo = j['yolo'] as bool? ?? s.yolo;
+    s.planMode = j['planMode'] as bool? ?? s.planMode;
+    s.messageCount = j['messageCount'] as int? ?? s.messageCount;
+    s.updatedAt = _parseDate(j['updatedAt']) ?? s.updatedAt;
+  }
+
+  void _updateSessionFromServer(Map<String, dynamic> j) {
+    final sid = j['id'] as String?;
+    if (sid == null) return;
+    final s = _findSession(sid);
+    if (s != null) _updateSessionFromJson(s, j);
   }
 
   void _ensureLocalSession() {
     if (sessions.isEmpty) {
-      final s = KimiSession(id: const Uuid().v4(), name: 'Chat', model: selectedModel, yolo: true);
-      sessions.add(s);
-      activeSession = s;
-      messages[s.id] = [];
+      createSession();
+    } else if (activeSession == null) {
+      selectSession(sessions.first);
     }
   }
 
-  void setBackend(ChatBackend b) { backend = b; notifyListeners(); }
-  void setModel(String m) {
-    selectedModel = m;
-    activeSession = activeSession?.copyWith(model: m);
-    notifyListeners();
-  }
-  void setSwarm(bool v) { swarmMode = v; notifyListeners(); }
-  void updateDirectProvider({String? baseUrl, String? apiKey}) {
-    if (baseUrl != null) directBaseUrl = baseUrl;
-    if (apiKey != null) directApiKey = apiKey;
-    direct = OpenAIStreamService(baseUrl: directBaseUrl, apiKey: directApiKey);
-    notifyListeners();
-  }
-
-  Future<void> connect() async {
-    if (bridgeUrl == null || bridgeUrl!.isEmpty) return;
-    connecting = true; connectionError = null; notifyListeners();
-    try {
-      await bridge.connect(bridgeUrl!);
-      if (bridge.isConnected) bridge.listSessions();
-    } catch (e) {
-      connectionError = e.toString().replaceFirst('Exception: ', '');
-    } finally {
-      connecting = false; notifyListeners();
-    }
-  }
-
-  void disconnect() { bridge.disconnect(); notifyListeners(); }
-
-  void createSession({String? name}) {
-    final s = KimiSession(
-      id: const Uuid().v4(),
-      name: name ?? 'Chat ${sessions.length + 1}',
-      model: selectedModel,
-      yolo: true,
-    );
-    sessions.insert(0, s);
-    activeSession = s;
-    messages[s.id] = [];
-    notifyListeners();
-    if (backend == ChatBackend.bridge && bridge.isConnected) {
-      bridge.createSession(name: s.name, model: selectedModel);
-    }
-  }
-
-  void selectSession(KimiSession s) { activeSession = s; notifyListeners(); }
-
-  void deleteSession(String id) {
-    sessions.removeWhere((s) => s.id == id);
-    messages.remove(id);
-    if (activeSession?.id == id) activeSession = sessions.isNotEmpty ? sessions.first : null;
-    if (activeSession == null) _ensureLocalSession();
-    notifyListeners();
-  }
-
-  List<ChatMessage> messagesFor(String sessionId) => messages[sessionId] ?? [];
-
-  Future<void> sendPrompt(String text) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty || isGenerating) return;
-    if (activeSession == null) createSession();
-    final s = activeSession!;
-    final sid = s.id;
-
-    messages.putIfAbsent(sid, () => []).add(ChatMessage(role: MessageRole.user, content: trimmed));
-    messages[sid]!.add(ChatMessage(role: MessageRole.assistant, isStreaming: true));
-    s.status = SessionStatus.streaming;
-    s.messageCount += 1;
-    isGenerating = true;
-    notifyListeners();
-
-    if (backend == ChatBackend.bridge && bridge.isConnected) {
-      bridge.sendPrompt(sid, trimmed);
-      return;
-    }
-    await _runDirect(sid, trimmed);
-  }
-
-  Future<void> _runDirect(String sessionId, String userText) async {
-    final history = <Map<String, String>>[];
-    for (final m in messages[sessionId] ?? []) {
-      if (m.role == MessageRole.user) history.add({'role': 'user', 'content': m.content});
-      else if (m.role == MessageRole.assistant && m.content.isNotEmpty) {
-        history.add({'role': 'assistant', 'content': m.content});
-      }
-    }
-    if (history.isEmpty || history.last['role'] != 'user') {
-      history.add({'role': 'user', 'content': userText});
-    }
-
-    final stream = swarmMode
-        ? direct.swarm(models: List.from(swarmModels), messages: history)
-        : direct.chat(model: selectedModel, messages: history);
-
-    _genSub?.cancel();
-    _genSub = stream.listen((ev) {
-      final type = ev['type'];
-      if (type == 'content') _appendContent(sessionId, ev['text'] ?? '');
-      else if (type == 'thinking') _appendThinking(sessionId, ev['text'] ?? '');
-      else if (type == 'status') _appendContent(sessionId, '\n_${ev['text']}_\n');
-      else if (type == 'error') { _appendContent(sessionId, '\n⚠️ ${ev['text']}\n'); _finishTurn(sessionId); }
-      else if (type == 'done') {
-        if (ev['model'] != null) activeSession = activeSession?.copyWith(model: ev['model']);
-        _finishTurn(sessionId);
-      }
-    }, onError: (e) { _appendContent(sessionId, '\n⚠️ $e\n'); _finishTurn(sessionId); },
-       onDone: () => _finishTurn(sessionId));
-  }
-
-  void interrupt() {
-    _genSub?.cancel(); _genSub = null;
-    final s = activeSession;
-    if (s != null) {
-      if (backend == ChatBackend.bridge && bridge.isConnected) bridge.interrupt(s.id);
-      _finishTurn(s.id);
-    }
-  }
-
-  void toggleYolo() {
-    final s = activeSession; if (s == null) return;
-    s.yolo = !s.yolo;
-    if (bridge.isConnected) bridge.setYolo(s.id, s.yolo);
-    notifyListeners();
-  }
-
-  void togglePlanMode() {
-    final s = activeSession; if (s == null) return;
-    s.planMode = !s.planMode;
-    if (bridge.isConnected) bridge.setPlanMode(s.id, s.planMode);
-    notifyListeners();
-  }
-
-  void approveTool(String toolCallId, {bool always = false}) {
-    final s = activeSession; if (s == null) return;
-    if (bridge.isConnected) bridge.approveTool(s.id, toolCallId, always: always);
-  }
-
-  void denyTool(String toolCallId) {
-    final s = activeSession; if (s == null) return;
-    if (bridge.isConnected) bridge.denyTool(s.id, toolCallId);
-  }
-
-  void _onBridgeEvent(BridgeEvent e) {
-    switch (e.type) {
-      case BridgeEventType.connected:
-        connectionError = null; notifyListeners(); break;
-      case BridgeEventType.disconnected:
-      case BridgeEventType.error:
-        connectionError = e.data['message'] as String?; notifyListeners(); break;
-      case BridgeEventType.thinkingDelta:
-        _appendThinking(e.data['sessionId'] as String? ?? activeSession?.id ?? '', e.data['delta'] as String? ?? ''); break;
-      case BridgeEventType.contentDelta:
-        _appendContent(e.data['sessionId'] as String? ?? activeSession?.id ?? '', e.data['delta'] as String? ?? ''); break;
-      case BridgeEventType.turnComplete:
-        _finishTurn(e.data['sessionId'] as String? ?? activeSession?.id ?? ''); break;
-      case BridgeEventType.pong:
-        final sent = e.data['ts'] as int?;
-        if (sent != null) { latencyMs = (DateTime.now().millisecondsSinceEpoch - sent).toDouble(); notifyListeners(); }
-        break;
-      default: break;
-    }
-  }
-
-  void _appendThinking(String sessionId, String delta) {
-    if (sessionId.isEmpty) return;
-    final msgs = messages[sessionId];
-    if (msgs == null || msgs.isEmpty) return;
-    final last = msgs.last;
-    if (last.role != MessageRole.assistant) return;
-    msgs[msgs.length - 1] = last.copyWith(reasoningContent: (last.reasoningContent ?? '') + delta);
-    final s = sessions.cast<KimiSession?>().firstWhere((x) => x?.id == sessionId, orElse: () => null);
-    if (s != null) s.status = SessionStatus.thinking;
-    notifyListeners();
-  }
-
-  void _appendContent(String sessionId, String delta) {
-    if (sessionId.isEmpty) return;
-    final msgs = messages[sessionId];
-    if (msgs == null || msgs.isEmpty) return;
-    final last = msgs.last;
-    if (last.role != MessageRole.assistant) return;
-    msgs[msgs.length - 1] = last.copyWith(content: last.content + delta);
-    final s = sessions.cast<KimiSession?>().firstWhere((x) => x?.id == sessionId, orElse: () => null);
-    if (s != null) s.status = SessionStatus.streaming;
-    notifyListeners();
-  }
-
-  void _finishTurn(String sessionId) {
-    isGenerating = false;
-    final msgs = messages[sessionId];
-    if (msgs != null && msgs.isNotEmpty && msgs.last.isStreaming) {
-      msgs[msgs.length - 1] = msgs.last.copyWith(isStreaming: false);
-    }
-    final s = sessions.cast<KimiSession?>().firstWhere((x) => x?.id == sessionId, orElse: () => null);
-    if (s != null) s.status = SessionStatus.idle;
-    notifyListeners();
+  DateTime? _parseDate(dynamic v) {
+    if (v is String) return DateTime.tryParse(v);
+    return null;
   }
 
   @override
   void dispose() {
-    _sub?.cancel(); _genSub?.cancel(); bridge.dispose(); super.dispose();
+    _sub?.cancel();
+    bridge.dispose();
+    super.dispose();
   }
 }

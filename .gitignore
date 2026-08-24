@@ -3,3 +3,8 @@ node_modules/
 bridge/bridge*.log
 research/imgs-*/
 research/imgs-mobbin-screens/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+dist/

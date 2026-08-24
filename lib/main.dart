@@ -1,18 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'ui/theme/kimi_theme.dart';
-import 'ui/screens/home_screen.dart';
+import 'theme/app_theme.dart';
 import 'services/app_state.dart';
+import 'screens/home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: KimiColors.lacquer,
-  ));
-  runApp(const KimiProxyApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => AppState()..init(),
+      child: const KimiProxyApp(),
+    ),
+  );
 }
 
 class KimiProxyApp extends StatelessWidget {
@@ -20,14 +19,15 @@ class KimiProxyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AppState()..init(),
-      child: MaterialApp(
-        title: 'Kimi Proxy',
-        debugShowCheckedModeBanner: false,
-        theme: KimiTheme.dark,
-        home: const HomeScreen(),
-      ),
+    final state = context.watch<AppState>();
+    final dark = state.theme != 'light';
+    return MaterialApp(
+      title: 'Kimi Proxy',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+      home: const HomeScreen(),
     );
   }
 }
